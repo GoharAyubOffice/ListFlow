@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "listflow"
+version = "0.1.0"
+description = "AliExpress / Amazon -> eBay product import CLI (personal tool)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "httpx>=0.27",
+    "selectolax>=0.3.21",
+    "playwright>=1.44",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "respx>=0.21",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+listflow = "listflow.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["listflow*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

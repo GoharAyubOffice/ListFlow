@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+credentials.json
+
+# Local app state (normally in ~/.listflow, guarded here too)
+.listflow/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# NOTE: tests/fixtures/*.html and *.json fixtures MUST stay committed.
+# Do not add ignore rules for tests/fixtures/.
