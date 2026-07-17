@@ -133,13 +133,43 @@ sandbox-first, NOT a SaaS. Do not add multi-tenancy, queues, web frameworks, or 
 
 **Known issues / debt:** none.
 
-## ⬜ Phase 2 — Detector — NOT STARTED ← **RESUME HERE**
+## ✅ Phase 2 — Detector (COMPLETED 2026-07-17)
 
-Next action: per `IMPLEMENTATION_PLAN.md` Phase 2 — write `tests/test_detector.py`
-(10+ URL shapes per platform: desktop, mobile `m.`, share/short links, tracking params —
-spec §9.1), then implement `detector.py`: `detect(url) -> SourcePlatform` (enum already
-exists in `models.py`); unknown URL → clear error. Exit gate: detector tests green.
-## ⬜ Phase 3 — eBay auth + client (Sandbox) — NOT STARTED (blocked on user's eBay keysets)
+**What was built (tests first):**
+- `tests/test_detector.py` — 12 URL shapes per platform: desktop, bare-domain, mobile
+  (`m.`, `/gp/aw/d/`), country domains (`.us`, `.ru`, `es.`, `.de`, `.com.au`),
+  share/short links (`a.aliexpress.com`, `amzn.eu`, `amzn.to`, `a.co`), tracking params,
+  scheme-less paste, uppercase URL. Plus 8 rejection cases: eBay, platform name only in
+  the query string, lookalike domains (`amazonia.com`, `best-aliexpress-deals.com`),
+  spoofed subdomain (`amazon.evil.example`), garbage/empty/blank input.
+- `listflow/detector.py` — `detect(url) -> SourcePlatform`; hostname-only matching
+  (registrable domain must be `aliexpress.*`/`amazon.*` or a known short-link host);
+  tolerates missing scheme; unknown → `UnknownPlatformError(ValueError)` with a clear
+  "supported platforms" message.
+
+**Verified (exit gate green):** `pytest` → **91 passed in 0.20s** (offline);
+`ruff check .` → all checks passed.
+
+**Decisions made:** platform decision uses the hostname only (a brand name in a path or
+query string never counts); after the brand label every remaining label must be a 2–3
+letter TLD part, which rejects `amazon.evil.example`-style spoofs; Amazon short-link
+hosts `amzn.to|eu|asia|in|com` and `a.co` accepted (they redirect — the extractor
+follows them).
+
+**Known issues / debt:** none.
+
+## ⏳ Phase 3 — eBay auth + client (Sandbox) — NOT STARTED ← **RESUME HERE**
+
+Offline build can proceed without keysets; only the final live `listflow auth` sandbox
+verification is blocked on the user's `.env`. Next action: per `IMPLEMENTATION_PLAN.md`
+Phase 3 — `config.py` (.env + optional config.toml, fail-fast on missing keys),
+`ebay/auth.py` (authorization-code grant, localhost:8912/callback listener,
+refresh-token store at `~/.listflow/credentials.json` chmod 600, access-token cache,
+never print tokens), `ebay/client.py` (base URL from `EBAY_ENV`, bearer injection,
+429/5xx retry max 3 exponential, `EbayApiError` carrying eBay's raw `errors[].message`
++ `errorId` + failing call), respx-mocked tests for token refresh / retry-on-429 /
+error surfacing.
+
 ## ⬜ Phase 4 — Publisher pipeline + images + taxonomy — NOT STARTED
 ## ⬜ Phase 5 — Amazon extractor + normalize — NOT STARTED
 ## ⬜ Phase 6 — AliExpress extractor — NOT STARTED (needs `playwright install chromium`)
