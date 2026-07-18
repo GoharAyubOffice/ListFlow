@@ -13,6 +13,11 @@ from pydantic import BaseModel
 
 REQUIRED_ENV_KEYS = ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET")
 
+
+def listflow_home() -> Path:
+    """App state dir: ~/.listflow, overridable via LISTFLOW_HOME (tests use this)."""
+    return Path(os.environ.get("LISTFLOW_HOME", str(Path.home() / ".listflow")))
+
 # money keys in config.toml are converted to Decimal via str() at this boundary,
 # so a bare toml number (margin = 0.25) never leaks a float into pricing paths
 _TOML_MONEY_KEYS = ("margin", "fvf_rate", "fixed_fee")

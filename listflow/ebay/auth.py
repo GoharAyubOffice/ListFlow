@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 import httpx
 
-from listflow.config import Settings
+from listflow.config import Settings, listflow_home
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +51,6 @@ class AuthError(RuntimeError):
 
 class NotAuthenticatedError(AuthError):
     """No stored credentials — the user must run `listflow auth` first."""
-
-
-def listflow_home() -> Path:
-    """App state dir: ~/.listflow, overridable via LISTFLOW_HOME (tests use this)."""
-    return Path(os.environ.get("LISTFLOW_HOME", str(Path.home() / ".listflow")))
 
 
 def _credentials_path() -> Path:

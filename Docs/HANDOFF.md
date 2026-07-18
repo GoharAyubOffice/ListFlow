@@ -256,7 +256,48 @@ supplier `<img>` never reaches eBay (only `ebay_url`s go into imageUrls);
 
 **Known issues / debt:** Media API sandbox behaviour unverified until E2; location
 payload is minimal (country GB only) — may need a postcode for production publish.
-## ⬜ Phase 5 — Amazon extractor + normalize — NOT STARTED
+## ✅ Phase 5 — Amazon extractor + normalize (COMPLETED 2026-07-18)
+
+**Fixture:** `tests/fixtures/amazon_B00BAGTNAQ.html` (ChomChom Roller, amazon.co.uk,
+2.3MB, captured 2026-07-18 with one polite httpx fetch — no robot check hit).
+
+**What was built (tests first — `test_extractors.py` 15, `test_normalize.py` 12):**
+- `listflow/config.py` — `listflow_home()` moved here from ebay/auth.py (extractors
+  need the debug dir without depending on the ebay package; auth re-exports it).
+- `listflow/extractors/base.py` — `Extractor` ABC; `ExtractionError(field_missing,
+  page_snapshot_path)` whose str() names the snapshot; `save_debug_snapshot()` writes
+  timestamped pages to `LISTFLOW_HOME/debug/` (the repair-loop raw material).
+- `listflow/extractors/amazon.py` — httpx + selectolax, one pinned `SELECTORS` dict.
+  Title `#productTitle`; price = first `.a-price .a-offscreen` (→ Decimal + currency
+  from symbol); ASIN from `input#ASIN` or URL (`/dp/`, `/gp/product/`, `/gp/aw/d/`);
+  bullets deduped; description `#productDescription` **falling back to
+  `#aplus_feature_div`** (A+ content — the fixture page has no plain description
+  block); images from `"hiRes"` inline JSON (fallback `"large"`, then `#landingImage`),
+  deduped; attributes from the `#productOverview_feature_div` table + `#prodDetails`
+  rows with a noise blocklist (ASIN/reviews/rank/dates); store name from `#bylineInfo`
+  (log only). Robot-check markers → wait 30s → one retry → hard `ExtractionError` with
+  snapshot ("run from your normal network" advice). `dimensionValuesDisplayData`
+  presence → warns "importing selected variant only" (matrix is v2).
+- `listflow/normalize.py` — `normalize(raw) -> Product`: variants without price
+  dropped, unknown stock treated as in-stock (stock=1), `sku_suffix` generated from
+  attribute values ("RED-XL", fallback "V<n>"), base_cost = cheapest in-stock variant
+  else page price, images capped at `MAX_LISTING_IMAGES = 8` (spec target 4–8),
+  `item_specifics` via content.map_item_specifics, store_name never enters Product.
+
+**Verified (exit gate green):** `pytest` → **176 passed in 11.74s** offline;
+`ruff check .` clean; live smoke on a *second* product (ACE2ACE B0819XVK92):
+extract → normalize → clean_title (exactly 80 chars) → build_description →
+validate_forbidden → price(£14.43 → £21.99, margin 0.2024, floor ok), 8 images,
+5 specifics — all green.
+
+**⚠️ Pipeline-order lesson (Phase 7 must respect this):** `validate_forbidden` runs on
+the **rebuilt** description (`product.description_html = build_description(product)`),
+not the raw supplier HTML — raw Amazon HTML always contains "amazon" (media CDN URLs)
+and correctly fails validation. Order: normalize → clean_title → build_description →
+validate → price → publish.
+
+**Known issues / debt:** `_decap_shouting` title-cases all-caps brand names in titles
+("ACE2ACE" → "Ace2Ace") — cosmetic, revisit if it bothers listings.
 ## ⬜ Phase 6 — AliExpress extractor — NOT STARTED (needs `playwright install chromium`)
 ## ⬜ Phase 7 — CLI + storage — NOT STARTED
 ## ⬜ Phase 8 — Integration gates E1–E4 — NOT STARTED (E3 requires explicit human go)
