@@ -158,17 +158,56 @@ follows them).
 
 **Known issues / debt:** none.
 
-## ⏳ Phase 3 — eBay auth + client (Sandbox) — NOT STARTED ← **RESUME HERE**
+## ⏳ Phase 3 — eBay auth + client (Sandbox) — OFFLINE BUILD DONE 2026-07-18 ← **RESUME HERE: live gate**
 
-Offline build can proceed without keysets; only the final live `listflow auth` sandbox
-verification is blocked on the user's `.env`. Next action: per `IMPLEMENTATION_PLAN.md`
-Phase 3 — `config.py` (.env + optional config.toml, fail-fast on missing keys),
-`ebay/auth.py` (authorization-code grant, localhost:8912/callback listener,
-refresh-token store at `~/.listflow/credentials.json` chmod 600, access-token cache,
-never print tokens), `ebay/client.py` (base URL from `EBAY_ENV`, bearer injection,
-429/5xx retry max 3 exponential, `EbayApiError` carrying eBay's raw `errors[].message`
-+ `errorId` + failing call), respx-mocked tests for token refresh / retry-on-429 /
-error surfacing.
+**What was built (tests first):**
+- `tests/test_config.py` (10), `tests/test_ebay_auth.py` (12), `tests/test_ebay_client.py`
+  (8) — all respx-mocked / localhost-only; an autouse fixture points `LISTFLOW_HOME` at
+  tmp so tests never touch real `~/.listflow`, and another clears real eBay env vars.
+- `listflow/config.py` — `load_env_file` (tiny stdlib .env parser, existing environ wins;
+  no python-dotenv dep), `load_settings` → `Settings` (pydantic): required
+  `EBAY_CLIENT_ID`/`EBAY_CLIENT_SECRET` (missing → `MissingConfigError` with hint),
+  `EBAY_RU_NAME` optional, `EBAY_ENV` sandbox-default, plus config.toml overrides
+  (margin/fvf_rate/fixed_fee converted `Decimal(str(x))` at the boundary — no floats
+  leak; max_qty, boilerplate, marketplace/currency, 3 business-policy IDs).
+- `listflow/ebay/auth.py` — `EbayAuth`: `consent_url()` (auth.sandbox vs auth host from
+  env; raises if RU_NAME missing), `_wait_for_callback_code()` (stdlib HTTPServer on
+  127.0.0.1:8912, request-line logging suppressed so the code never hits logs, timeout →
+  `AuthError`), `exchange_code()` (Basic-auth token POST → refresh token saved to
+  `LISTFLOW_HOME/credentials.json`, `os.open(0o600)` + chmod), `get_access_token()`
+  (in-memory cache with 60s safety margin, `force_refresh` flag, missing credentials →
+  `NotAuthenticatedError("run listflow auth")`), `run_consent_flow()`. `SCOPES` =
+  api_scope + sell.inventory + sell.account.readonly + sell.marketing.readonly.
+- `listflow/ebay/client.py` — `EbayClient.request()`: host from `API_HOSTS[ebay_env]`,
+  bearer + Content-Language en-GB + `X-EBAY-C-MARKETPLACE-ID` headers; 401 → one forced
+  token refresh then retry; 429/5xx → exponential backoff 1s/2s/4s (max 3, injectable
+  `sleep` for tests); other 4xx → immediate `EbayApiError` carrying eBay `errors[]`
+  verbatim (errorId + message + which call). `get/post/put/delete` helpers.
+- `listflow/cli.py` — minimal `auth` command wired (`listflow auth`), `--verbose` flag.
+
+**Verified:** `pytest` → **120 passed in 4.71s** offline; `ruff check .` clean;
+`listflow --help` shows the auth command.
+
+**Decisions made:** no python-dotenv (stdlib parser keeps the dep list per CLAUDE.md);
+LISTFLOW_HOME env var overrides `~/.listflow` (testability); access token cached in
+memory only (never persisted); 401 handled by one forced refresh before failing;
+callback listener suppresses request-line logging (auth code would appear in it).
+
+**⚠️ Spec deviation (2026-07-18):** spec §7.1 assumed a localhost:8912 callback
+listener, but eBay's developer portal only accepts **https://** redirect URLs, so the
+redirect can never reach a plain local HTTP listener. `run_consent_flow` now uses a
+**manual-paste flow**: redirect-URL fields stay blank in the portal (eBay shows its
+default success page whose address bar carries `?code=`), the user pastes that URL into
+the terminal, `_code_from_user_paste` extracts/decodes the code. The 8912 listener code
+is kept for a future https-capable redirect. User's sandbox RuName:
+`TOP_G_LABS_LTD-TOPGLABS-opencl-qhnfskhf` (goes in `.env` as `EBAY_RU_NAME`).
+
+**⏳ Exit gate remaining (needs the human):** run `.venv\Scripts\listflow.exe auth`
+with a filled `.env` (EBAY_CLIENT_ID/SECRET sandbox keyset + EBAY_RU_NAME; redirect-URL
+fields left blank in the portal), approve in the browser with a **sandbox test user**,
+paste the success-page URL into the terminal, confirm "Done — eBay authorisation
+stored." and that `~/.listflow/credentials.json` exists. Then Phase 3 is ✅ and
+Phase 4 (publisher pipeline, fully offline/respx) can start.
 
 ## ⬜ Phase 4 — Publisher pipeline + images + taxonomy — NOT STARTED
 ## ⬜ Phase 5 — Amazon extractor + normalize — NOT STARTED
