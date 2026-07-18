@@ -298,7 +298,49 @@ validate → price → publish.
 
 **Known issues / debt:** `_decap_shouting` title-cases all-caps brand names in titles
 ("ACE2ACE" → "Ace2Ace") — cosmetic, revisit if it bothers listings.
-## ⬜ Phase 6 — AliExpress extractor — NOT STARTED (needs `playwright install chromium`)
+## ✅ Phase 6 — AliExpress extractor (COMPLETED 2026-07-18)
+
+**Fixtures (live item, pet hair laundry ball):**
+`tests/fixtures/aliexpress_1005010171981745.html` (402KB page),
+`..._state.json` (80KB blob from `window._d_c_` + which key it came from),
+`..._desc.html` (lazy description endpoint response). Two earlier candidate items
+turned out to be dead listings (render an empty shell with hidden `<h1>Aliexpress</h1>`
+— NOT a bot block; recognise this pattern before blaming detection).
+
+**🔑 State discovery (pinned, the critical maintenance knowledge):** product data
+lives in `window._d_c_` → `lifeCycleEventList[0].data` = module map:
+`PRODUCT_TITLE.text`; `SKU.skuPaths[]` ({path "14:200004889", skuIdStr, skuStock,
+salable}) + `SKU.skuProperties[]` (property/value id → display name + sku image);
+`PRICE.skuPriceInfoMap[skuIdStr]` (salePriceString "￡0.85", originalPrice.{value,
+currency}); `QUANTITY_PC.allSkuQuantityView[skuIdStr].maxBuyCount`;
+`HEADER_IMAGE_PC.imagePathList`; `PRODUCT_PROP_PC.showedProps[]` (attrName/attrValue);
+`DESC.msiteDescUrl` (tokenised lazy-description endpoint); `SHOP_CARD_PC.sellerInfo`
+(storeName often absent). `runParams` exists but is **empty** on the current PDP.
+JSON-LD (`@type: Product`) is embedded in the HTML — partial fallback.
+
+**What was built (tests first — 16 new tests in `test_extractors.py`):**
+- `listflow/extractors/aliexpress.py` — `AliExpressExtractor`: Playwright persistent
+  profile at `LISTFLOW_HOME/chrome-profile`, headless default + `headed=True` toggle,
+  randomised 2–5s dwell, `STATE_DUMP_JS` (pinned keys → runtime window scan returning
+  `{key, json}`), state parsed with `json.loads(parse_float=Decimal)` so **no float
+  ever touches money**; fallback chain parse(): state → JSON-LD (warns partial) → DOM
+  (actionable schema-drift errors); `fetch_description()` pulls the lazy DESC url;
+  block detection `_looks_blocked(html, final_url)` (x5secdata/punish/slide-to-verify
+  in html, login/punish in final URL) → error instructing `--headed`, snapshot saved,
+  no retries; sku matrix → `RawVariant`s with per-sku price/stock/image.
+- Regression captured in tests: a normal page's `login.aliexpress` nav link must NOT
+  count as a block (false positive found during the live smoke and fixed).
+
+**Verified (exit gate green):** `pytest` → **192 passed in 16.39s** offline (<30s ✓);
+`ruff check .` clean; live headless end-to-end smoke: extract → normalize →
+clean_title (74 chars) → build_description → validate_forbidden → price: 5 variants,
+base cost £0.85 (cheapest in-stock SKU) → sell £1.99, margin 0.2965, 6 images,
+Brand XMSJ mapped. Headless worked on live items once the profile existed.
+
+**Known issues / debt:** dead-listing shell pages surface as "no product title …
+item may be unavailable" — fine, but a friendlier "item appears to be removed" check
+(detect hidden-h1 shell) could come with Phase 7 polish. Item specifics include
+`Origin: Mainland China` and `High-Concerned Chemical: None` — harmless, revisit.
 ## ⬜ Phase 7 — CLI + storage — NOT STARTED
 ## ⬜ Phase 8 — Integration gates E1–E4 — NOT STARTED (E3 requires explicit human go)
 
