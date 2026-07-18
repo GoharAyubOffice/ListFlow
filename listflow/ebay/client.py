@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 
+# The Media API (image hosting) lives on its own host, still env-selected.
+MEDIA_HOSTS = {
+    "sandbox": "https://apim.sandbox.ebay.com",
+    "production": "https://apim.ebay.com",
+}
+
 
 class _TokenProvider(Protocol):
     def get_access_token(self, force_refresh: bool = False) -> str: ...
@@ -64,6 +70,8 @@ class EbayClient:
         self._http = http or httpx.Client(timeout=30)
         self._sleep = sleep
         self.base_url = API_HOSTS[settings.ebay_env]
+        self.media_base_url = MEDIA_HOSTS[settings.ebay_env]
+        self.marketplace_id = settings.marketplace_id
 
     def request(
         self,
@@ -73,9 +81,10 @@ class EbayClient:
         json: Any = None,
         params: dict | None = None,
         headers: dict[str, str] | None = None,
+        files: dict | None = None,
     ) -> httpx.Response:
         call = f"{method} {path}"
-        url = self.base_url + path
+        url = path if path.startswith("http") else self.base_url + path
         retries = 0
         reauthed = False
         while True:
@@ -86,8 +95,11 @@ class EbayClient:
                 "Content-Language": "en-GB",
                 "X-EBAY-C-MARKETPLACE-ID": self._settings.marketplace_id,
             } | (headers or {})
+            if files is not None:
+                # httpx must set its own multipart boundary Content-Type
+                merged_headers.pop("Content-Type", None)
             response = self._http.request(
-                method, url, json=json, params=params, headers=merged_headers
+                method, url, json=json, params=params, headers=merged_headers, files=files
             )
             if response.status_code < 400:
                 return response

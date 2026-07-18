@@ -158,7 +158,14 @@ follows them).
 
 **Known issues / debt:** none.
 
-## ⏳ Phase 3 — eBay auth + client (Sandbox) — OFFLINE BUILD DONE 2026-07-18 ← **RESUME HERE: live gate**
+## ✅ Phase 3 — eBay auth + client (Sandbox) (COMPLETED 2026-07-18)
+
+**Live gate passed 2026-07-18:** user ran `listflow auth` against sandbox — consent →
+code paste → token exchange → refresh token stored in `~/.listflow/credentials.json`.
+Verified end-to-end with a real sandbox call through the full stack
+(`EbayClient` → `EbayAuth` refresh → `GET /sell/account/v1/privilege` → HTTP 200).
+Note: sandbox test user shows `sellerRegistrationCompleted: False` — may need
+attention before gate E2 (sandbox publish).
 
 **What was built (tests first):**
 - `tests/test_config.py` (10), `tests/test_ebay_auth.py` (12), `tests/test_ebay_client.py`
@@ -209,7 +216,46 @@ paste the success-page URL into the terminal, confirm "Done — eBay authorisati
 stored." and that `~/.listflow/credentials.json` exists. Then Phase 3 is ✅ and
 Phase 4 (publisher pipeline, fully offline/respx) can start.
 
-## ⬜ Phase 4 — Publisher pipeline + images + taxonomy — NOT STARTED
+## ✅ Phase 4 — Publisher pipeline + images + taxonomy (COMPLETED 2026-07-18)
+
+**What was built (tests first — `test_taxonomy.py` 4, `test_images.py` 9,
+`test_publisher.py` 8, plus client extensions):**
+- `listflow/ebay/client.py` extended: absolute-URL requests (Media API lives on
+  `apim.[sandbox.]ebay.com` — added `MEDIA_HOSTS`/`media_base_url`), multipart `files=`
+  uploads (drops the JSON Content-Type so httpx sets the boundary), public
+  `marketplace_id`.
+- `listflow/ebay/taxonomy.py` — `default_category_tree_id()` (marketplace-scoped) and
+  `suggest_category(client, title, tree_id=None)` → top hit's categoryId; empty result →
+  `CategorySuggestionError` telling the user to pass `--category`.
+- `listflow/images.py` — `image_size()` reads dimensions from raw PNG/GIF/JPEG/WebP-VP8X
+  headers (**no Pillow — dep list unchanged**); `fetch_images()` downloads sequentially
+  (politeness cap), drops <500px/broken/unknown images with warnings, errors if none
+  usable; `upload_images()` re-hosts via Media API POST `/commerce/media/v1_beta/image`
+  (imageUrl from body, or follows the Location header), fills `asset.ebay_url`.
+- `listflow/ebay/publisher.py` — `make_sku()` (`LF-{source_id[:12]}-{sha1[:4]}`,
+  unsafe chars stripped), `Publisher.ensure_location()` (GET MAIN → 404 → create GB
+  WAREHOUSE), `Publisher.publish(product, pricing, publish=False, category_id=None)`
+  running location → images → category → inventory item (title/description/aspects/
+  imageUrls/qty/condition NEW) → offer (FIXED_PRICE, price str from Decimal, policies
+  from config when set) → optional publishOffer. Each completed step is appended to
+  `PublishResult.steps_completed` **and** reported via `on_step(sku, step)` — storage.py
+  (Phase 7) will persist this for `listflow retry`.
+
+**Verified (exit gate green):** `pytest` → **148 passed in 11.51s** offline;
+`ruff check .` clean. Covered: draft + publish happy paths with full payload
+assertions, location auto-create, `--category` override skips taxonomy, 429-retry on
+offer, partial failure (offer 400) records exactly the 4 completed steps, sku
+stability, image size parsing per format, undersized/broken image handling, Media API
+body/Location-header variants.
+
+**Decisions made:** image dimensions parsed from file headers instead of adding
+Pillow; `listingPolicies` omitted when no policy IDs configured (publish will fail at
+E2 without them — the user task "create business policies" already covers this);
+supplier `<img>` never reaches eBay (only `ebay_url`s go into imageUrls);
+`on_step` callback decouples publisher from storage until Phase 7.
+
+**Known issues / debt:** Media API sandbox behaviour unverified until E2; location
+payload is minimal (country GB only) — may need a postcode for production publish.
 ## ⬜ Phase 5 — Amazon extractor + normalize — NOT STARTED
 ## ⬜ Phase 6 — AliExpress extractor — NOT STARTED (needs `playwright install chromium`)
 ## ⬜ Phase 7 — CLI + storage — NOT STARTED
