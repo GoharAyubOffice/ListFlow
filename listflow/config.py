@@ -29,6 +29,10 @@ _TOML_PLAIN_KEYS = (
     "payment_policy_id",
     "return_policy_id",
     "fulfillment_policy_id",
+    "ship_from_address_line1",
+    "ship_from_city",
+    "ship_from_postal_code",
+    "ship_from_country",
 )
 
 
@@ -57,6 +61,11 @@ class Settings(BaseModel):
     payment_policy_id: str | None = None
     return_policy_id: str | None = None
     fulfillment_policy_id: str | None = None
+    # Ship-from address for the inventory location (eBay requires a real one).
+    ship_from_address_line1: str = ""
+    ship_from_city: str = ""
+    ship_from_postal_code: str = ""
+    ship_from_country: str = "GB"
 
 
 def load_env_file(path: str | Path = ".env") -> None:

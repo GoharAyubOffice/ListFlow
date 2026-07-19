@@ -62,12 +62,25 @@ class Publisher:
         except EbayApiError as err:
             if err.status_code != 404:
                 raise
+        # eBay rejects a country-only address; a real ship-from postcode + city is required.
+        if not (self._settings.ship_from_postal_code and self._settings.ship_from_city):
+            raise ValueError(
+                "ship-from address is not configured — set ship_from_address_line1, "
+                "ship_from_city and ship_from_postal_code in config.toml before publishing"
+            )
+        address = {
+            "city": self._settings.ship_from_city,
+            "postalCode": self._settings.ship_from_postal_code,
+            "country": self._settings.ship_from_country,
+        }
+        if self._settings.ship_from_address_line1:
+            address["addressLine1"] = self._settings.ship_from_address_line1
         logger.info("creating inventory location %r", LOCATION_KEY)
         self._client.post(
             f"/sell/inventory/v1/location/{LOCATION_KEY}",
             json={
                 "name": "Listflow main location",
-                "location": {"address": {"country": "GB"}},
+                "location": {"address": address},
                 "merchantLocationStatus": "ENABLED",
                 "locationTypes": ["WAREHOUSE"],
             },
@@ -94,6 +107,7 @@ class Publisher:
 
         fetched = images_mod.fetch_images(product)
         images_mod.upload_images(self._client, fetched)
+        image_urls = images_mod.listing_image_urls(fetched)
         done("images")
 
         title = product.title_ebay or product.title_raw
@@ -102,7 +116,7 @@ class Publisher:
 
         self._client.put(
             f"/sell/inventory/v1/inventory_item/{sku}",
-            json=self._inventory_payload(product, title),
+            json=self._inventory_payload(product, title, image_urls),
         )
         done("inventory_item")
 
@@ -128,8 +142,7 @@ class Publisher:
             logger.info("offer %s left as draft (no --publish)", result.offer_id)
         return result
 
-    def _inventory_payload(self, product: Product, title: str) -> dict:
-        image_urls = [str(a.ebay_url) for a in product.images if a.ebay_url]
+    def _inventory_payload(self, product: Product, title: str, image_urls: list[str]) -> dict:
         return {
             "product": {
                 "title": title,

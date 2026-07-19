@@ -7,6 +7,13 @@ payment_policy_id = "6237835000"
 return_policy_id = "6237836000"
 fulfillment_policy_id = "6237837000"
 
+# Ship-from address for the eBay inventory location (a real one is required).
+# Replace with your genuine dispatch address before going to production.
+ship_from_address_line1 = "1 High Street"
+ship_from_city = "London"
+ship_from_postal_code = "EC1A 1BB"
+ship_from_country = "GB"
+
 # Pricing (defaults shown; override per your test-and-kill maths).
 margin = 0.20
 fvf_rate = 0.128

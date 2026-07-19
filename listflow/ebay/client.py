@@ -98,9 +98,26 @@ class EbayClient:
             if files is not None:
                 # httpx must set its own multipart boundary Content-Type
                 merged_headers.pop("Content-Type", None)
-            response = self._http.request(
-                method, url, json=json, params=params, headers=merged_headers, files=files
-            )
+            try:
+                response = self._http.request(
+                    method, url, json=json, params=params, headers=merged_headers, files=files
+                )
+            except httpx.TransportError as exc:
+                # network-level failure (timeout, connection reset) — retry like a 5xx
+                if retries < MAX_RETRIES:
+                    delay = 2**retries
+                    retries += 1
+                    logger.warning(
+                        "eBay %s network error (%s) — retry %d/%d in %ds",
+                        call, exc, retries, MAX_RETRIES, delay,
+                    )
+                    self._sleep(delay)
+                    continue
+                raise EbayApiError(
+                    call=call,
+                    status_code=0,
+                    errors=[{"errorId": None, "message": f"network error: {exc}"}],
+                ) from exc
             if response.status_code < 400:
                 return response
             if response.status_code == 401 and not reauthed:

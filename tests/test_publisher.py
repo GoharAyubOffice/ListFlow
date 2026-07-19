@@ -43,6 +43,9 @@ def make_settings(**overrides) -> Settings:
         "payment_policy_id": "PAY-1",
         "return_policy_id": "RET-1",
         "fulfillment_policy_id": "SHIP-1",
+        "ship_from_city": "London",
+        "ship_from_postal_code": "EC1A 1BB",
+        "ship_from_address_line1": "1 High Street",
     }
     base.update(overrides)
     return Settings(**base)
@@ -184,12 +187,27 @@ def test_publish_happy_path_returns_listing_id():
 
 
 @respx.mock
-def test_missing_location_gets_created():
+def test_missing_location_gets_created_with_address():
     product = make_product()
     routes = mock_happy_pipeline(make_sku(product.source_id), location_exists=False)
     publisher, _ = make_publisher()
     publisher.publish(product, price(Decimal("10.00")))
     assert routes["loc_post"].call_count == 1
+    payload = jsonlib.loads(routes["loc_post"].calls.last.request.content)
+    address = payload["location"]["address"]
+    assert address["postalCode"] == "EC1A 1BB"  # real ship-from address, not country-only
+    assert address["city"] == "London"
+    assert address["country"] == "GB"
+
+
+@respx.mock
+def test_missing_ship_from_address_is_actionable():
+    product = make_product()
+    mock_happy_pipeline(make_sku(product.source_id), location_exists=False)
+    settings = make_settings(ship_from_city="", ship_from_postal_code="")
+    publisher = Publisher(EbayClient(settings, FakeAuth(), sleep=lambda _s: None), settings)
+    with pytest.raises(ValueError, match="ship-from address"):
+        publisher.publish(product, price(Decimal("10.00")))
 
 
 @respx.mock

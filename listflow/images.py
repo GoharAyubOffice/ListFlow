@@ -11,7 +11,7 @@ import struct
 
 import httpx
 
-from listflow.ebay.client import EbayClient
+from listflow.ebay.client import EbayApiError, EbayClient
 from listflow.models import ImageAsset, Product
 
 logger = logging.getLogger(__name__)
@@ -90,20 +90,38 @@ def fetch_images(
 
 
 def upload_images(client: EbayClient, assets: list[tuple[ImageAsset, bytes]]) -> None:
-    """Re-host each image via the eBay Media API, filling asset.ebay_url."""
+    """Best-effort re-host via the eBay Media API, filling asset.ebay_url.
+
+    The Media image endpoint is not available in eBay's sandbox (404), and can be
+    flaky in production. On any failure we leave ebay_url unset and fall back to the
+    source URL — eBay downloads and re-hosts imageUrls to its own EPS servers when the
+    offer is published, so the live listing still never hotlinks the supplier CDN.
+    """
     for asset, data in assets:
-        response = client.post(
-            client.media_base_url + MEDIA_PATH,
-            files={"image": ("image", data, "application/octet-stream")},
-        )
-        ebay_url = _extract_image_url(client, response)
-        if not ebay_url:
-            raise ImageError(
-                "Media API upload succeeded but returned no imageUrl "
-                f"(HTTP {response.status_code})"
+        try:
+            response = client.post(
+                client.media_base_url + MEDIA_PATH,
+                files={"image": ("image", data, "application/octet-stream")},
             )
-        asset.ebay_url = ebay_url
-        logger.info("image re-hosted on eBay: %s", ebay_url)
+        except EbayApiError as exc:
+            logger.warning(
+                "eBay Media API unavailable (%s) — passing the source image URL instead; "
+                "eBay re-hosts imageUrls to its own servers at publish",
+                exc,
+            )
+            continue
+        ebay_url = _extract_image_url(client, response)
+        if ebay_url:
+            asset.ebay_url = ebay_url
+            logger.info("image re-hosted on eBay: %s", ebay_url)
+        else:
+            logger.warning("Media API returned no imageUrl — using the source URL for this image")
+
+
+def listing_image_urls(assets: list[tuple[ImageAsset, bytes]]) -> list[str]:
+    """URLs to put in the listing: the eBay-hosted URL when we got one, else the
+    validated source URL (which eBay re-hosts at publish)."""
+    return [str(asset.ebay_url or asset.source_url) for asset, _ in assets]
 
 
 def _extract_image_url(client: EbayClient, response: httpx.Response) -> str | None:

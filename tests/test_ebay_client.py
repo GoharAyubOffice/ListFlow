@@ -132,6 +132,27 @@ def test_401_twice_raises():
 
 
 @respx.mock
+def test_transport_error_retried_then_succeeds():
+    route = respx.get(f"{SANDBOX}/x")
+    route.side_effect = [httpx.WriteTimeout("write timed out"), httpx.Response(200, json={})]
+    client, sleeps = make_client()
+    response = client.get("/x")
+    assert response.status_code == 200
+    assert sleeps == [1]
+
+
+@respx.mock
+def test_transport_error_exhausted_raises_clean_error():
+    respx.get(f"{SANDBOX}/x").mock(side_effect=httpx.ConnectError("boom"))
+    client, sleeps = make_client()
+    with pytest.raises(EbayApiError) as excinfo:
+        client.get("/x")
+    assert excinfo.value.status_code == 0
+    assert "network error" in str(excinfo.value)
+    assert len(sleeps) == MAX_RETRIES
+
+
+@respx.mock
 def test_non_json_error_body_still_surfaces():
     respx.get(f"{SANDBOX}/x").respond(502, text="<html>Bad gateway</html>")
     client, _ = make_client()

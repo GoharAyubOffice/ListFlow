@@ -12,7 +12,14 @@ import respx
 
 from listflow.config import Settings
 from listflow.ebay.client import EbayClient
-from listflow.images import MIN_LONGEST_SIDE, ImageError, fetch_images, image_size, upload_images
+from listflow.images import (
+    MIN_LONGEST_SIDE,
+    ImageError,
+    fetch_images,
+    image_size,
+    listing_image_urls,
+    upload_images,
+)
 from listflow.models import Product
 
 MEDIA = "https://apim.sandbox.ebay.com/commerce/media/v1_beta/image"
@@ -141,8 +148,35 @@ def test_upload_images_follows_location_header():
 
 
 @respx.mock
-def test_upload_images_no_url_raises():
-    respx.post(MEDIA).respond(201, text="")
+def test_upload_images_no_url_falls_back_to_source():
+    respx.post(MEDIA).respond(201, text="")  # 201 but no imageUrl in body
     product = make_product(["https://cdn.example.com/big.png"])
-    with pytest.raises(ImageError, match="imageUrl"):
-        upload_images(make_client(), [(product.images[0], png_bytes(800, 800))])
+    asset = product.images[0]
+    fetched = [(asset, png_bytes(800, 800))]
+    upload_images(make_client(), fetched)
+    assert asset.ebay_url is None  # no hard failure
+    assert listing_image_urls(fetched) == ["https://cdn.example.com/big.png"]
+
+
+@respx.mock
+def test_upload_images_media_404_falls_back_to_source():
+    # sandbox behaviour: Media API endpoint returns 404 → keep source URL
+    respx.post(MEDIA).respond(404, json={"errors": [{"errorId": 2002, "message": "Not found"}]})
+    product = make_product(["https://cdn.example.com/big.png"])
+    asset = product.images[0]
+    fetched = [(asset, png_bytes(800, 800))]
+    upload_images(make_client(), fetched)
+    assert asset.ebay_url is None
+    assert listing_image_urls(fetched) == ["https://cdn.example.com/big.png"]
+
+
+def test_listing_image_urls_prefers_ebay_url():
+    from listflow.models import ImageAsset
+
+    a = ImageAsset(source_url="https://cdn.example.com/1.png",
+                   ebay_url="https://i.ebayimg.com/1.jpg")
+    b = ImageAsset(source_url="https://cdn.example.com/2.png")
+    assert listing_image_urls([(a, b""), (b, b"")]) == [
+        "https://i.ebayimg.com/1.jpg",
+        "https://cdn.example.com/2.png",
+    ]

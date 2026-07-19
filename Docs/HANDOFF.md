@@ -391,7 +391,48 @@ not persisted — acceptable for v1) and reuses the SKU + any existing offer id.
 **Known issues / debt:** retry loses the original --margin/--variant/--category choices
 (re-extracts with defaults); `list` needs a wide-ish terminal (8 columns).
 
-## ⬜ Phase 8 — Integration gates E1–E4 — NOT STARTED (E3 requires explicit human go)
+## ⏳ Phase 8 — Integration gates E1–E4 — E2 PASSED 2026-07-18 ← **RESUME HERE**
+
+**✅ E2 — Sandbox publish PASSED (first real end-to-end):** `listflow import --publish`
+(then `retry --publish`) put a live listing in sandbox. Verified via API: offer
+`11323710010` status **PUBLISHED**, listing **110589969538**, 8 imageUrls accepted,
+aspects Brand/Material/Handle Material/Colour/Operation Mode, price £21.99 GBP; tracker
+row `published`. Category auto-suggested "Brushes, Combs & Rakes (46305)".
+Test SKU: `LF-B00BAGTNAQ-59a4` (ChomChom, amazon.co.uk).
+
+**Five sandbox-reality bugs found & fixed during E2 (all with regression tests):**
+1. **Inventory location** — country-only address → `25802 Input error`. eBay needs a
+   real ship-from address. Added `ship_from_address_line1/city/postal_code/country` to
+   Settings + `config.toml`; publisher builds the address and raises a clear error if
+   city/postcode are unset. (Sandbox placeholder address is in `config.toml`.)
+2. **Media API 404 in sandbox** — `apim.sandbox.ebay.com/commerce/media/v1_beta/image`
+   returns 404 (endpoint not available in sandbox; also flaky/503). Made `upload_images`
+   **best-effort**: on failure it falls back to putting the source image URL in the
+   inventory item's `imageUrls`, which eBay re-hosts to its own EPS at publish — the live
+   listing still doesn't hotlink the supplier. New `listing_image_urls()` helper; publisher
+   builds imageUrls from the fetched/validated assets (ebay_url or source_url). **Deviation
+   from spec §6.5** (which mandated Media API) — justified: same end result, and Media is
+   unavailable in sandbox. Revisit for production (Media API may work there).
+3. **Transport errors uncaught** — a `WriteTimeout` crashed the CLI with a raw traceback.
+   `EbayClient` now catches `httpx.TransportError`, retries like a 5xx (backoff, max 3),
+   and raises a clean `EbayApiError(status_code=0, "network error: …")` if exhausted.
+4. **Windows Unicode crash** — the `✓`/`£`/`—` in output raised `UnicodeEncodeError` on
+   cp1252 consoles (after the publish had already succeeded). `cli.main` now reconfigures
+   stdout/stderr to UTF-8.
+5. **retry couldn't publish / resume a draft** — `retry` defaulted to draft (can't infer
+   original `--publish` intent) and refused non-'failed' rows. Added `retry --publish` and
+   allowed resuming `draft` rows (publishes the existing offer via `existing_offer_id`).
+
+**Verified:** `pytest` → **235 passed** offline; `ruff` clean.
+
+**⬜ Remaining gates (need the human):**
+- **E1 — Live extract:** `--dry-run` on ~5 real AliExpress + 5 Amazon products, prices
+  penny-accurate. (Amazon dry-run already smoke-passed twice; AliExpress once.)
+- **E3 — Production draft:** ⚠️ ONLY on explicit human go. Flip `EBAY_ENV=production`,
+  create production business policies + real ship-from address in a production
+  `config.toml`, re-run `listflow auth` against production, one draft import, review in
+  Seller Hub. Media API may work in production (remove/keep fallback as needed).
+- **E4 — Timing:** wall-clock ≤60s AliExpress, ≤15s Amazon.
 
 ---
 
@@ -402,7 +443,7 @@ not persisted — acceptable for v1) and reuses the SKU + any existing offer id.
 | Register at developer.ebay.com, create Sandbox + Production keysets | Phase 3 | ✅ done (sandbox) |
 | Create eBay business policies (payment/return/postage) | Phase 4/E2 | ✅ done (via API, see below) |
 | Copy `.env.example` → `.env` and fill keys | Phase 3 | ✅ done |
-| Approve production use after sandbox E2E passes (gate E3) | Phase 8 | not started |
+| Approve production use after sandbox E2E passes (gate E3) | Phase 8 | ⏳ E2 passed — awaiting go |
 
 **Business policies (created 2026-07-18):** the sandbox Seller Hub UI for business
 policies is broken (well-documented eBay issue) AND the account was not opted in

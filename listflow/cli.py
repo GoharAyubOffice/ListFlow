@@ -4,7 +4,9 @@ Wires the whole pipeline together. Extraction/pricing/content is delegated to
 pipeline.py; eBay publishing to ebay/publisher.py; persistence to storage.py.
 """
 
+import contextlib
 import logging
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,6 +22,10 @@ logger = logging.getLogger(__name__)
 @app.callback()
 def main(verbose: bool = typer.Option(False, "--verbose", help="Enable DEBUG logging.")) -> None:
     """Listflow — AliExpress / Amazon -> eBay product import tool."""
+    # Windows terminals default to cp1252, which can't encode £/✓/— in our output.
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(AttributeError, ValueError):
+            stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
@@ -197,7 +203,10 @@ def _print_publish_result(settings, sku: str, result, status: str) -> None:
 
 
 @app.command()
-def retry(sku: str = typer.Argument(..., help="SKU of a failed import to resume")) -> None:
+def retry(
+    sku: str = typer.Argument(..., help="SKU of a failed import to resume"),
+    publish: bool = typer.Option(False, "--publish", help="Publish live, not just draft."),
+) -> None:
     """Resume a failed publish, re-extracting the source and reusing the SKU."""
     from listflow.extractors.base import ExtractionError
     from listflow.pipeline import prepare
@@ -209,8 +218,8 @@ def retry(sku: str = typer.Argument(..., help="SKU of a failed import to resume"
     if row is None:
         typer.secho(f"No import found for SKU {sku!r}.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
-    if row["status"] not in ("failed",):
-        typer.secho(f"SKU {sku} has status {row['status']!r}, not 'failed' — nothing to retry.",
+    if row["status"] not in ("failed", "draft"):
+        typer.secho(f"SKU {sku} has status {row['status']!r} — nothing to retry.",
                     fg=typer.colors.YELLOW)
         raise typer.Exit(code=0)
 
@@ -222,8 +231,8 @@ def retry(sku: str = typer.Argument(..., help="SKU of a failed import to resume"
         raise typer.Exit(code=1) from exc
 
     # if a previous run already created the offer, update it instead of duplicating
-    was_publish = row["status"] == "published" or bool(row["ebay_listing_id"])
-    _run_publish(settings, prepared, publish=was_publish, category_id=None,
+    go_live = publish or row["status"] == "published" or bool(row["ebay_listing_id"])
+    _run_publish(settings, prepared, publish=go_live, category_id=None,
                  existing_offer_id=row["ebay_offer_id"])
 
 
