@@ -447,7 +447,30 @@ listings, which the extractor rejected cleanly with a snapshot.)
 Minor debt: AliExpress specifics include low-value fields ("Cn: Hebei", "Set Type: Yes",
 "Disposable: No") — cosmetic, not blocking.
 
-**⬜ Remaining gates (need the human):**
+**✅ Production setup + E3 DRAFT PASSED (2026-07-19):** user authed a **personal**
+seller account (production, `sellerRegistrationCompleted: True`, limit £37k/5000);
+opted in + created 3 **production** policies (payment 400048221023, return 400048222023,
+fulfillment 400048223023); real dispatch address (41 Manor Drive, Wembley HA9 8EB) in
+config. `config.toml` now **git-ignored** (holds the real address — never commit). Real
+draft import succeeded: AliExpress garlic mincer → offer `210940067011` (UNPUBLISHED),
+SKU LF-100501165402-af0b, category 122939, £8.99, all 3 policies attached, 6 images, NEW.
+Read back from eBay to confirm.
+
+**🐛 Bug found by E3 (fixed + regression-tested):** AliExpress serves **lossy VP8 WebP**
+images under `.jpg` URLs; `image_size()` only handled VP8X, so every AliExpress image was
+rejected → `ImageError`. Now parses VP8/VP8L/VP8X (verified 800×800 on the real images).
+Also: `ImageError` now caught gracefully (records failed state + retry hint) instead of a
+traceback. Invisible to E1 (dry-run skips image download) and E2 (Amazon JPEGs).
+Also note: eBay **Media API returns 404 in production too** for this app → images fall
+back to source URLs, which eBay re-hosts to its own EPS servers at publish (no hotlinks).
+
+**⬜ Remaining (need the human):**
+- **Review the draft** (offer 210940067011) and decide: publish live (`--publish`, explicit
+  go) or delete the test draft. Note: AliExpress specifics include "Origin: Mainland China"
+  + "High-Concerned Chemical: None" — low-value noise worth filtering before real listings.
+- **E4 timing** — not yet measured.
+
+**⬜ Earlier remaining gates:**
 - **E3 — Production draft:** ⚠️ ONLY on explicit human go. Flip `EBAY_ENV=production`,
   create production business policies + real ship-from address in a production
   `config.toml`, re-run `listflow auth` against production, one draft import, review in
