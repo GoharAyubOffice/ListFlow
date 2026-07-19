@@ -14,6 +14,7 @@ from listflow.content import (
     build_description,
     clean_title,
     map_item_specifics,
+    strip_forbidden_content,
     validate_forbidden,
 )
 from listflow.models import Product, Variant
@@ -151,6 +152,34 @@ def test_validate_forbidden_checks_variant_attributes():
     with pytest.raises(ForbiddenTokenError) as excinfo:
         validate_forbidden(make_product(variants=[variant]))
     assert "variants[0]" in str(excinfo.value)
+
+
+def test_strip_forbidden_content_drops_bullets_and_specifics():
+    product = make_product(
+        bullet_points=["Soft and durable", "Visit our Amazon store for more"],
+        item_specifics={"Colour": "Blue", "Seller": "AliExpress Direct"},
+    )
+    dropped = strip_forbidden_content(product)
+    assert product.bullet_points == ["Soft and durable"]
+    assert product.item_specifics == {"Colour": "Blue"}
+    assert len(dropped) == 2
+    # after stripping, the product passes validation
+    product.description_html = "<p>Clean copy</p>"
+    validate_forbidden(product)
+
+
+def test_strip_forbidden_content_leaves_clean_product_untouched():
+    product = make_product()
+    before_bullets = list(product.bullet_points)
+    dropped = strip_forbidden_content(product)
+    assert dropped == []
+    assert product.bullet_points == before_bullets
+
+
+def test_strip_forbidden_content_uses_extra_tokens():
+    product = make_product(bullet_points=["From SuperPetStore warehouse"])
+    assert strip_forbidden_content(product, extra_forbidden=["SuperPetStore"])
+    assert product.bullet_points == []
 
 
 def test_validate_forbidden_extra_tokens_catch_store_names():

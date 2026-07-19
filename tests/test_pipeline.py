@@ -56,11 +56,30 @@ def test_prepare_from_raw_full_pipeline():
     assert prepared.store_name == "ChomChom Roller Store"
 
 
-def test_prepare_validates_rebuilt_description_not_raw():
-    # raw description mentioning a platform must be caught after rebuild
+def test_prepare_validates_rebuilt_description_body_hard_fails():
+    # a forbidden token in the description BODY is core content — still a hard failure
     raw = make_raw(description_html="<p>Genuine, shipped via Amazon Prime</p>")
     with pytest.raises(ForbiddenTokenError):
         prepare_from_raw(raw, settings=settings())
+
+
+def test_prepare_strips_forbidden_bullet_and_succeeds():
+    # a supplier-branded bullet is noise — dropped, not a hard failure (real E1 case)
+    raw = make_raw(
+        bullet_points=["Reusable and soft", "Please visit our Amazon Official store"]
+    )
+    prepared = prepare_from_raw(raw, settings=settings())
+    assert prepared.product.bullet_points == ["Reusable and soft"]
+    assert "amazon" not in prepared.product.description_html.lower()
+
+
+def test_prepare_strips_forbidden_item_specific():
+    raw = make_raw(attributes={"colour": "White", "seller": "AliExpress Direct"})
+    prepared = prepare_from_raw(raw, settings=settings())
+    assert prepared.product.item_specifics.get("Colour") == "White"
+    assert all(
+        "aliexpress" not in v.lower() for v in prepared.product.item_specifics.values()
+    )
 
 
 def test_prepare_store_name_forbidden_when_it_leaks():

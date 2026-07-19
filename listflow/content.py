@@ -133,6 +133,38 @@ def _find_forbidden(text: str, extra: tuple[str, ...]) -> str | None:
     return None
 
 
+def strip_forbidden_content(product: Product, extra_forbidden: Iterable[str] = ()) -> list[str]:
+    """Drop supplementary listing content that carries a forbidden token.
+
+    Bullets and item-specific values are marketing/metadata noise (e.g. "visit our
+    Amazon store") — safe to remove. The title and description *body* are core content
+    and are NOT stripped here; a forbidden token there stays a hard failure in
+    validate_forbidden. Returns a list of human-readable descriptions of what was dropped.
+    """
+    extra = tuple(t.strip().lower() for t in extra_forbidden if t and t.strip())
+    dropped: list[str] = []
+
+    kept_bullets = []
+    for bullet in product.bullet_points:
+        token = _find_forbidden(bullet, extra)
+        if token is None:
+            kept_bullets.append(bullet)
+        else:
+            dropped.append(f"bullet (token {token!r}): {bullet[:60]}")
+    product.bullet_points = kept_bullets
+
+    kept_specifics = {}
+    for key, value in product.item_specifics.items():
+        token = _find_forbidden(f"{key} {value}", extra)
+        if token is None:
+            kept_specifics[key] = value
+        else:
+            dropped.append(f"item specific {key!r} (token {token!r})")
+    product.item_specifics = kept_specifics
+
+    return dropped
+
+
 def validate_forbidden(product: Product, extra_forbidden: Iterable[str] = ()) -> None:
     """Raise ForbiddenTokenError if any listing-bound field contains a forbidden token.
 

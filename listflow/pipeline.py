@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from listflow.config import Settings
-from listflow.content import build_description, clean_title, validate_forbidden
+from listflow.content import (
+    build_description,
+    clean_title,
+    strip_forbidden_content,
+    validate_forbidden,
+)
 from listflow.detector import detect
 from listflow.models import Product, RawProduct, SourcePlatform, Variant
 from listflow.normalize import normalize
@@ -84,10 +89,15 @@ def prepare_from_raw(
         product.item_specifics.update(chosen.attributes)
 
     product.title_ebay = clean_title(product.title_raw, primary_keyword=primary_keyword)
-    product.description_html = build_description(product, boilerplate=settings.boilerplate)
 
     # store name is checked as an extra forbidden token (never allowed into a listing)
     extra = [raw.store_name] if raw.store_name else []
+    # strip supplier-branded bullets/specifics (e.g. "visit our Amazon store") before
+    # building the description, so they never reach a listing field
+    for dropped in strip_forbidden_content(product, extra_forbidden=extra):
+        logger.info("dropped forbidden content: %s", dropped)
+
+    product.description_html = build_description(product, boilerplate=settings.boilerplate)
     validate_forbidden(product, extra_forbidden=extra)
 
     pricing = price(

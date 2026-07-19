@@ -425,9 +425,19 @@ Test SKU: `LF-B00BAGTNAQ-59a4` (ChomChom, amazon.co.uk).
 
 **Verified:** `pytest` → **235 passed** offline; `ruff` clean.
 
+**⏳ E1 — Live extract IN PROGRESS (2026-07-18):** 1 Amazon + 1 AliExpress dry-run so far
+(bath towels). Amazon B0B4F78QZX £16.04→£24.99; AliExpress 1005010246193426 £24.53→£36.99
+(6 variants). Both fields-complete. **Bug found & fixed (regression-tested):** a
+supplier bullet "visit our Amazon Official store" made the forbidden-token guard
+hard-crash the CLI. Fix: `content.strip_forbidden_content()` drops bullets/item-specifics
+carrying a forbidden token (marketing noise) BEFORE validation; the title and description
+*body* still hard-fail (core content). Pipeline strips before build/validate; CLI now
+reports `ForbiddenTokenError` cleanly instead of a traceback. Still need ~4 more of each
+platform to complete E1. Minor debt: AliExpress specifics include low-value fields
+("Cn: Hebei", "Set Type: Yes", "Disposable: No") — cosmetic, not blocking.
+
 **⬜ Remaining gates (need the human):**
-- **E1 — Live extract:** `--dry-run` on ~5 real AliExpress + 5 Amazon products, prices
-  penny-accurate. (Amazon dry-run already smoke-passed twice; AliExpress once.)
+- **E1:** finish ~4 more AliExpress + 4 more Amazon dry-runs; eyeball each price vs page.
 - **E3 — Production draft:** ⚠️ ONLY on explicit human go. Flip `EBAY_ENV=production`,
   create production business policies + real ship-from address in a production
   `config.toml`, re-run `listflow auth` against production, one draft import, review in

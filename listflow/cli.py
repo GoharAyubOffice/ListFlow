@@ -113,6 +113,7 @@ def import_(
     force: bool = typer.Option(False, "--force", help="Publish even if below margin floor."),
 ) -> None:
     """Import a product URL into an eBay draft offer (or --publish live)."""
+    from listflow.content import ForbiddenTokenError
     from listflow.extractors.base import ExtractionError
     from listflow.pipeline import VariantError, prepare
 
@@ -124,6 +125,14 @@ def import_(
         )
     except (ExtractionError, VariantError) as exc:
         typer.secho(f"Extraction failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    except ForbiddenTokenError as exc:
+        typer.secho(
+            f"Blocked: {exc}\nA forbidden supplier token is in the title or description "
+            "body and cannot be auto-stripped — edit the source or skip this product.",
+            fg=typer.colors.RED,
+            err=True,
+        )
         raise typer.Exit(code=1) from exc
 
     _print_prepared(prepared, category_id=category)
@@ -208,6 +217,7 @@ def retry(
     publish: bool = typer.Option(False, "--publish", help="Publish live, not just draft."),
 ) -> None:
     """Resume a failed publish, re-extracting the source and reusing the SKU."""
+    from listflow.content import ForbiddenTokenError
     from listflow.extractors.base import ExtractionError
     from listflow.pipeline import prepare
     from listflow.storage import Tracker
@@ -226,7 +236,7 @@ def retry(
     typer.echo(f"Retrying {sku} from {row['source_url']} (last step: {row['last_step']})…")
     try:
         prepared = prepare(row["source_url"], settings=settings)
-    except ExtractionError as exc:
+    except (ExtractionError, ForbiddenTokenError) as exc:
         typer.secho(f"Re-extraction failed: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
 
