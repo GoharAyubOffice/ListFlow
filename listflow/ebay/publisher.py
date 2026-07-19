@@ -177,9 +177,16 @@ class Publisher:
         policies = {
             "paymentPolicyId": self._settings.payment_policy_id,
             "returnPolicyId": self._settings.return_policy_id,
-            "fulfillmentPolicyId": self._settings.fulfillment_policy_id,
+            "fulfillmentPolicyId": self._fulfillment_policy_id(product),
         }
         policies = {k: v for k, v in policies.items() if v}
         if policies:
             payload["listingPolicies"] = policies
         return payload
+
+    def _fulfillment_policy_id(self, product: Product) -> str | None:
+        """AliExpress ships from abroad — use the slow (long-handling) postage policy
+        when configured; Amazon and everything else use the default/fast one."""
+        if product.source_platform == "aliexpress" and self._settings.fulfillment_policy_id_slow:
+            return self._settings.fulfillment_policy_id_slow
+        return self._settings.fulfillment_policy_id

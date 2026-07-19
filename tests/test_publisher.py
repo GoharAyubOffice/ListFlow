@@ -42,13 +42,38 @@ def make_settings(**overrides) -> Settings:
         "ebay_client_secret": "b",
         "payment_policy_id": "PAY-1",
         "return_policy_id": "RET-1",
-        "fulfillment_policy_id": "SHIP-1",
+        "fulfillment_policy_id": "SHIP-FAST",
+        "fulfillment_policy_id_slow": "SHIP-SLOW",
         "ship_from_city": "London",
         "ship_from_postal_code": "EC1A 1BB",
         "ship_from_address_line1": "1 High Street",
     }
     base.update(overrides)
     return Settings(**base)
+
+
+def test_amazon_uses_fast_fulfillment_policy():
+    pub, _ = make_publisher()
+    product = make_product()  # source_platform = amazon
+    payload = pub._offer_payload(product, price(Decimal("10.00")), "SKU", "123")
+    assert payload["listingPolicies"]["fulfillmentPolicyId"] == "SHIP-FAST"
+
+
+def test_aliexpress_uses_slow_fulfillment_policy():
+    pub, _ = make_publisher()
+    product = make_product()
+    product.source_platform = "aliexpress"
+    payload = pub._offer_payload(product, price(Decimal("10.00")), "SKU", "123")
+    assert payload["listingPolicies"]["fulfillmentPolicyId"] == "SHIP-SLOW"
+
+
+def test_aliexpress_falls_back_to_default_when_no_slow_policy():
+    settings = make_settings(fulfillment_policy_id_slow=None)
+    pub = Publisher(EbayClient(settings, FakeAuth(), sleep=lambda _s: None), settings)
+    product = make_product()
+    product.source_platform = "aliexpress"
+    payload = pub._offer_payload(product, price(Decimal("10.00")), "SKU", "123")
+    assert payload["listingPolicies"]["fulfillmentPolicyId"] == "SHIP-FAST"
 
 
 def make_product() -> Product:
@@ -171,7 +196,7 @@ def test_draft_happy_path():
     assert offer_payload["listingPolicies"] == {
         "paymentPolicyId": "PAY-1",
         "returnPolicyId": "RET-1",
-        "fulfillmentPolicyId": "SHIP-1",
+        "fulfillmentPolicyId": "SHIP-FAST",  # amazon product -> fast policy
     }
 
 

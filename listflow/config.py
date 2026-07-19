@@ -29,6 +29,7 @@ _TOML_PLAIN_KEYS = (
     "payment_policy_id",
     "return_policy_id",
     "fulfillment_policy_id",
+    "fulfillment_policy_id_slow",
     "ship_from_address_line1",
     "ship_from_city",
     "ship_from_postal_code",
@@ -60,7 +61,10 @@ class Settings(BaseModel):
     boilerplate: str = ""
     payment_policy_id: str | None = None
     return_policy_id: str | None = None
-    fulfillment_policy_id: str | None = None
+    fulfillment_policy_id: str | None = None  # default/fast (Amazon: quick dispatch)
+    # slow postage policy for AliExpress (longer handling — supplier ships from abroad);
+    # falls back to fulfillment_policy_id when unset.
+    fulfillment_policy_id_slow: str | None = None
     # Ship-from address for the inventory location (eBay requires a real one).
     ship_from_address_line1: str = ""
     ship_from_city: str = ""
