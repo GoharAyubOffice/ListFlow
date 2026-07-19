@@ -1,6 +1,7 @@
-# Secrets — never commit
+# Secrets / personal data — never commit
 .env
 credentials.json
+config.toml            # contains real dispatch address + policy IDs (personal)
 
 # Local app state (normally in ~/.listflow, guarded here too)
 .listflow/
