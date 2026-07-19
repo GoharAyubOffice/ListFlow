@@ -47,10 +47,23 @@ def image_size(data: bytes) -> tuple[int, int] | None:
                 height, width = struct.unpack(">HH", data[i + 5 : i + 9])
                 return width, height
             i += 2 + length
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP" and data[12:16] == b"VP8X":
-        width = int.from_bytes(data[24:27], "little") + 1
-        height = int.from_bytes(data[27:30], "little") + 1
-        return width, height
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        # WebP has three chunk layouts; AliExpress serves VP8 (lossy) as .jpg URLs.
+        fourcc = data[12:16]
+        if fourcc == b"VP8X":  # extended: 24-bit canvas width-1 / height-1
+            width = int.from_bytes(data[24:27], "little") + 1
+            height = int.from_bytes(data[27:30], "little") + 1
+            return width, height
+        if fourcc == b"VP8 ":  # lossy: 14-bit dims after the 0x9d012a start code
+            if data[23:26] == b"\x9d\x01\x2a":
+                width = (data[26] | (data[27] << 8)) & 0x3FFF
+                height = (data[28] | (data[29] << 8)) & 0x3FFF
+                return width, height
+        elif fourcc == b"VP8L":  # lossless: 14+14 bits packed after the 0x2f signature
+            bits = int.from_bytes(data[21:25], "little")
+            width = (bits & 0x3FFF) + 1
+            height = ((bits >> 14) & 0x3FFF) + 1
+            return width, height
     return None
 
 

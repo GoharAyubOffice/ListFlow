@@ -160,6 +160,7 @@ def _run_publish(settings, prepared, *, publish: bool, category_id: str | None,
     from listflow.ebay.auth import EbayAuth
     from listflow.ebay.client import EbayApiError, EbayClient
     from listflow.ebay.publisher import Publisher, make_sku
+    from listflow.images import ImageError
     from listflow.storage import Tracker
 
     product, pricing = prepared.product, prepared.pricing
@@ -183,9 +184,9 @@ def _run_publish(settings, prepared, *, publish: bool, category_id: str | None,
                 product, pricing, publish=publish, category_id=category_id,
                 existing_offer_id=existing_offer_id,
             )
-        except EbayApiError as exc:
+        except (EbayApiError, ImageError) as exc:
             tracker.finish(sku, status="failed", notes=str(exc))
-            typer.secho(f"\neBay publish failed at step after "
+            typer.secho(f"\nPublish failed at step after "
                         f"'{tracker.get(sku)['last_step']}':", fg=typer.colors.RED, err=True)
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
             typer.secho(f"State saved — resume with:  listflow retry {sku}", fg=typer.colors.YELLOW)

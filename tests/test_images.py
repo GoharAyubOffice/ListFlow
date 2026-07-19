@@ -45,6 +45,29 @@ def jpeg_bytes(width: int, height: int) -> bytes:
     return b"\xff\xd8" + app0 + sof0 + b"\x03" + bytes(9) + b"\xff\xd9"
 
 
+def _webp(body: bytes) -> bytes:
+    return b"RIFF" + struct.pack("<I", len(body) + 4) + b"WEBP" + body
+
+
+def webp_vp8_bytes(width: int, height: int) -> bytes:  # lossy — what AliExpress serves
+    return _webp(
+        b"VP8 " + struct.pack("<I", 10) + b"\x00\x00\x00" + b"\x9d\x01\x2a"
+        + struct.pack("<H", width & 0x3FFF) + struct.pack("<H", height & 0x3FFF)
+    )
+
+
+def webp_vp8l_bytes(width: int, height: int) -> bytes:  # lossless
+    packed = ((width - 1) & 0x3FFF) | (((height - 1) & 0x3FFF) << 14)
+    return _webp(b"VP8L" + struct.pack("<I", 5) + b"\x2f" + struct.pack("<I", packed))
+
+
+def webp_vp8x_bytes(width: int, height: int) -> bytes:  # extended
+    return _webp(
+        b"VP8X" + struct.pack("<I", 10) + b"\x00\x00\x00\x00"
+        + (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
+    )
+
+
 class FakeAuth:
     def get_access_token(self, force_refresh: bool = False) -> str:
         return "tok"
@@ -81,6 +104,21 @@ def test_image_size_gif():
 
 def test_image_size_jpeg():
     assert image_size(jpeg_bytes(800, 600)) == (800, 600)
+
+
+def test_image_size_webp_vp8_lossy():
+    # regression (2026-07-19): AliExpress serves lossy VP8 WebP as .jpg URLs;
+    # image_size() only handled VP8X, so every AliExpress image was rejected
+    assert image_size(webp_vp8_bytes(800, 800)) == (800, 800)
+    assert image_size(webp_vp8_bytes(1200, 900)) == (1200, 900)
+
+
+def test_image_size_webp_vp8l_lossless():
+    assert image_size(webp_vp8l_bytes(640, 480)) == (640, 480)
+
+
+def test_image_size_webp_vp8x_extended():
+    assert image_size(webp_vp8x_bytes(1024, 768)) == (1024, 768)
 
 
 def test_image_size_unknown_format():
