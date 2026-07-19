@@ -22,6 +22,10 @@ dev = [
     "respx>=0.21",
     "ruff>=0.4",
 ]
+# local single-user GUI (listflow gui) — optional so the core CLI stays lean
+gui = [
+    "streamlit>=1.36",
+]
 
 [project.scripts]
 listflow = "listflow.cli:app"

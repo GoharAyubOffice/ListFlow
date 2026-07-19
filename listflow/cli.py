@@ -289,3 +289,31 @@ def export(csv_path: Path = typer.Option(..., "--csv", help="Output CSV path")) 
     with Tracker.open() as tracker:
         count = tracker.export_csv(csv_path)
     typer.secho(f"Exported {count} row(s) to {csv_path}", fg=typer.colors.GREEN)
+
+
+@app.command()
+def gui() -> None:
+    """Open the local Streamlit GUI (install with: pip install -e .[gui])."""
+    import subprocess
+    import sys
+
+    try:
+        import streamlit  # noqa: F401
+    except ImportError as exc:
+        typer.secho(
+            'Streamlit is not installed — run:  pip install -e ".[gui]"',
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    app_path = Path(__file__).parent / "gui_app.py"
+    typer.echo("Starting the Listflow GUI (Ctrl+C to stop)…")
+    subprocess.run(
+        [
+            sys.executable, "-m", "streamlit", "run", str(app_path),
+            "--browser.gatherUsageStats", "false",
+            "--server.address", "127.0.0.1",
+        ],
+        check=False,
+    )
