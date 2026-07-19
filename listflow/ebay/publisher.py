@@ -25,6 +25,13 @@ LOCATION_KEY = "MAIN"
 STEPS = ("location", "images", "category", "inventory_item", "offer", "publish")
 
 
+def _is_duplicate_offer_error(err: EbayApiError) -> bool:
+    # eBay reuses errorId 25002 for many user errors — the message is the signal.
+    return any(
+        "already exists" in str(item.get("message", "")).lower() for item in err.errors
+    )
+
+
 def make_sku(source_id: str) -> str:
     """Stable, traceable SKU: LF-{source_id[:12]}-{hash4} (spec §7.2 step 4)."""
     safe_id = re.sub(r"[^A-Za-z0-9]", "", source_id)[:12]
@@ -127,8 +134,20 @@ class Publisher:
             self._client.put(f"/sell/inventory/v1/offer/{existing_offer_id}", json=offer_payload)
             result.offer_id = existing_offer_id
         else:
-            offer_response = self._client.post("/sell/inventory/v1/offer", json=offer_payload)
-            result.offer_id = offer_response.json()["offerId"]
+            try:
+                offer_response = self._client.post(
+                    "/sell/inventory/v1/offer", json=offer_payload
+                )
+                result.offer_id = offer_response.json()["offerId"]
+            except EbayApiError as err:
+                if not _is_duplicate_offer_error(err):
+                    raise
+                # a previous run already created the offer for this SKU — find and update
+                result.offer_id = self._find_offer_id(sku)
+                logger.info("offer for %s already exists (%s) — updating it", sku, result.offer_id)
+                self._client.put(
+                    f"/sell/inventory/v1/offer/{result.offer_id}", json=offer_payload
+                )
         done("offer")
 
         if publish:
@@ -183,6 +202,20 @@ class Publisher:
         if policies:
             payload["listingPolicies"] = policies
         return payload
+
+    def _find_offer_id(self, sku: str) -> str:
+        response = self._client.get(
+            "/sell/inventory/v1/offer",
+            params={"sku": sku, "marketplace_id": self._settings.marketplace_id},
+        )
+        offers = response.json().get("offers") or []
+        if not offers:
+            raise EbayApiError(
+                call=f"GET /sell/inventory/v1/offer?sku={sku}",
+                status_code=404,
+                errors=[{"errorId": None, "message": f"no existing offer found for {sku}"}],
+            )
+        return offers[0]["offerId"]
 
     def _fulfillment_policy_id(self, product: Product) -> str | None:
         """AliExpress ships from abroad — use the slow (long-handling) postage policy

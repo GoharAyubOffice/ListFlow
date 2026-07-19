@@ -264,6 +264,29 @@ def test_429_on_offer_is_retried():
 
 
 @respx.mock
+def test_duplicate_offer_recovers_by_updating_existing():
+    # regression (2026-07-19 GUI test): draft then publish re-ran the pipeline and
+    # POSTed a second offer for the same SKU -> eBay 25002 "already exists" crash.
+    product = make_product()
+    sku = make_sku(product.source_id)
+    routes = mock_happy_pipeline(sku)
+    routes["offer"].side_effect = [
+        httpx.Response(
+            400, json={"errors": [{"errorId": 25002, "message": "Offer entity already exists."}]}
+        )
+    ]
+    lookup = respx.get(f"{SANDBOX}/sell/inventory/v1/offer").respond(
+        200, json={"offers": [{"offerId": "OFF-OLD"}]}
+    )
+    update = respx.put(f"{SANDBOX}/sell/inventory/v1/offer/OFF-OLD").respond(204)
+    publisher, _ = make_publisher()
+    result = publisher.publish(product, price(Decimal("10.00")))
+    assert result.offer_id == "OFF-OLD"
+    assert lookup.call_count == 1
+    assert update.call_count == 1
+
+
+@respx.mock
 def test_retry_with_existing_offer_updates_not_duplicates():
     product = make_product()
     sku = make_sku(product.source_id)

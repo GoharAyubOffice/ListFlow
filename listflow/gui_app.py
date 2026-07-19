@@ -35,10 +35,21 @@ def _run_preview(url: str, *, margin, variant, headed: bool):
     )
 
 
-def _publish(prepared, *, publish: bool, category_id: str | None):
-    """Same flow as the CLI's _run_publish, returning (result, status)."""
+def _ebay_client():
     from listflow.ebay.auth import EbayAuth
     from listflow.ebay.client import EbayClient
+
+    settings = st.session_state["settings"]
+    return EbayClient(settings, EbayAuth(settings))
+
+
+def _publish(prepared, *, publish: bool, category_id: str | None,
+             existing_offer_id: str | None = None):
+    """Same flow as the CLI's _run_publish, returning (result, status).
+
+    existing_offer_id makes the offer step an update instead of a create, so
+    re-running for the same SKU never trips eBay's one-offer-per-SKU rule.
+    """
     from listflow.ebay.publisher import Publisher, make_sku
     from listflow.storage import Tracker
 
@@ -56,11 +67,11 @@ def _publish(prepared, *, publish: bool, category_id: str | None):
             sell_price=pricing.sell_price,
             margin_actual=pricing.margin_actual,
         )
-        client = EbayClient(settings, EbayAuth(settings))
-        publisher = Publisher(client, settings, on_step=tracker.mark_step)
+        publisher = Publisher(_ebay_client(), settings, on_step=tracker.mark_step)
         try:
             result = publisher.publish(
-                product, pricing, publish=publish, category_id=category_id or None
+                product, pricing, publish=publish, category_id=category_id or None,
+                existing_offer_id=existing_offer_id,
             )
         except Exception as exc:
             tracker.finish(sku, status="failed", notes=str(exc))
@@ -70,6 +81,27 @@ def _publish(prepared, *, publish: bool, category_id: str | None):
             sku, status=status, offer_id=result.offer_id, listing_id=result.listing_id
         )
     return result, status
+
+
+def _publish_existing_draft(sku: str, offer_id: str) -> str | None:
+    """One API call: publish an already-created draft offer; returns the listingId."""
+    from listflow.storage import Tracker
+
+    response = _ebay_client().post(f"/sell/inventory/v1/offer/{offer_id}/publish")
+    listing_id = response.json().get("listingId")
+    with Tracker.open() as tracker:
+        tracker.finish(sku, status="published", offer_id=offer_id, listing_id=listing_id)
+    return listing_id
+
+
+def _listing_url(listing_id: str) -> str:
+    env = st.session_state["settings"].ebay_env
+    base = "sandbox.ebay.com" if env == "sandbox" else "ebay.co.uk"
+    return f"https://www.{base}/itm/{listing_id}"
+
+
+def _flash(kind: str, message: str) -> None:
+    st.session_state["flash"] = (kind, message)
 
 
 def _apply_edits(prepared) -> list[str]:
@@ -184,7 +216,7 @@ def _render_editor(prepared) -> None:
             for offset, asset in enumerate(images[start : start + cols_per_row]):
                 i = start + offset
                 with row[offset]:
-                    st.image(str(asset.source_url), use_container_width=True)
+                    st.image(str(asset.source_url), width="stretch")
                     st.checkbox(f"Image {i + 1}", key=f"img_{i}")
         selected_count = sum(
             1 for i in range(len(images)) if st.session_state.get(f"img_{i}", True)
@@ -193,9 +225,55 @@ def _render_editor(prepared) -> None:
 
     st.divider()
     st.subheader("3 · Import to eBay")
+
+    draft = st.session_state.get("draft_offer")
+    if draft:
+        st.success(f"Draft ready — offer **{draft['offer_id']}** (SKU {draft['sku']})")
+        st.caption(
+            "ℹ️ eBay's Seller Hub 'Drafts' tab only shows drafts made with eBay's own "
+            "listing form — API-created drafts like this one never appear there "
+            "(an eBay platform limitation). This draft is tracked here and in "
+            "`listflow list`, and publishes with one click below."
+        )
+        b1, b2, _spacer = st.columns([1, 1, 2])
+        if b1.button("🚀 Publish this draft", type="primary", width="stretch"):
+            with st.spinner("Publishing the draft offer…"):
+                try:
+                    listing_id = _publish_existing_draft(draft["sku"], draft["offer_id"])
+                except Exception as exc:
+                    st.error(f"Publish failed: {exc}")
+                    return
+            st.session_state.pop("draft_offer", None)
+            _flash(
+                "success",
+                f"PUBLISHED ✓ SKU {draft['sku']} — live listing: "
+                f"{_listing_url(listing_id) if listing_id else '(no id returned)'}",
+            )
+            st.rerun()
+        if b2.button("📝 Update draft with edits", width="stretch"):
+            problems = _apply_edits(prepared)
+            if problems:
+                for problem in problems:
+                    st.error(problem)
+                return
+            with st.spinner("Updating the draft offer…"):
+                try:
+                    result, _status = _publish(
+                        prepared,
+                        publish=False,
+                        category_id=st.session_state.get("opt_category", ""),
+                        existing_offer_id=draft["offer_id"],
+                    )
+                except Exception as exc:
+                    st.error(f"Update failed: {exc}")
+                    return
+            _flash("success", f"Draft updated ✓ — offer {result.offer_id}")
+            st.rerun()
+        return
+
     b1, b2, _spacer = st.columns([1, 1, 2])
-    draft_clicked = b1.button("📝 Create draft", type="secondary", use_container_width=True)
-    publish_clicked = b2.button("🚀 Publish live", type="primary", use_container_width=True)
+    draft_clicked = b1.button("📝 Create draft", type="secondary", width="stretch")
+    publish_clicked = b2.button("🚀 Publish live", type="primary", width="stretch")
 
     if draft_clicked or publish_clicked:
         force = st.session_state.get("opt_force", False)
@@ -219,12 +297,17 @@ def _render_editor(prepared) -> None:
                 st.error(f"Import failed: {exc}")
                 st.info("State was saved — you can resume with `listflow retry <sku>`.")
                 return
-        st.success(f"{status.upper()} ✓  SKU {result.sku} — offer {result.offer_id}")
-        if result.listing_id:
-            env = st.session_state["settings"].ebay_env
-            base = "sandbox.ebay.com" if env == "sandbox" else "ebay.co.uk"
-            st.markdown(f"**Live listing:** https://www.{base}/itm/{result.listing_id}")
-        st.session_state["done"] = True
+        if status == "draft":
+            st.session_state["draft_offer"] = {"sku": result.sku, "offer_id": result.offer_id}
+            _flash("success", f"DRAFT ✓ SKU {result.sku} — offer {result.offer_id}")
+            st.rerun()
+        else:
+            _flash(
+                "success",
+                f"PUBLISHED ✓ SKU {result.sku} — live listing: "
+                f"{_listing_url(result.listing_id) if result.listing_id else result.offer_id}",
+            )
+            st.rerun()
 
 
 def main() -> None:
@@ -264,20 +347,26 @@ def main() -> None:
             "and validated."
         )
 
+    if "flash" in st.session_state:
+        kind, message = st.session_state.pop("flash")
+        (st.success if kind == "success" else st.error)(message)
+
     st.subheader("1 · Product URL")
     url_col, button_col = st.columns([5, 1])
     url = url_col.text_input(
         "Product URL", key="url", label_visibility="collapsed",
         placeholder="https://www.amazon.co.uk/dp/… or https://www.aliexpress.com/item/…",
     )
-    preview_clicked = button_col.button("🔍 Preview", type="primary", use_container_width=True)
+    preview_clicked = button_col.button("🔍 Preview", type="primary", width="stretch")
 
     if preview_clicked:
         if not url.strip():
             st.warning("Paste a product URL first.")
         else:
             for key in list(st.session_state):
-                if key.startswith("img_") or key in ("edit_title", "edit_desc", "done"):
+                if key.startswith("img_") or key in (
+                    "edit_title", "edit_desc", "done", "draft_offer",
+                ):
                     del st.session_state[key]
             with st.spinner("Extracting product (AliExpress opens a browser window)…"):
                 try:
