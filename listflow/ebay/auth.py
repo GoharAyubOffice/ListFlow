@@ -33,6 +33,7 @@ CALLBACK_PORT = 8912
 SCOPES = (
     "https://api.ebay.com/oauth/api_scope",
     "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    "https://api.ebay.com/oauth/api_scope/sell.account",  # write: opt-in + create policies
     "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
     "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
 )

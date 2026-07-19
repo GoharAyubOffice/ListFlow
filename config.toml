@@ -1,0 +1,17 @@
+# Listflow runtime config (non-secret). Secrets live in .env.
+# Money values are read as Decimal — plain numbers are fine here.
+
+# eBay business policy IDs (sandbox, created 2026-07-18 via Account API).
+# Regenerate these for production before going live.
+payment_policy_id = "6237835000"
+return_policy_id = "6237836000"
+fulfillment_policy_id = "6237837000"
+
+# Pricing (defaults shown; override per your test-and-kill maths).
+margin = 0.20
+fvf_rate = 0.128
+fixed_fee = 0.30
+max_qty = 3
+
+# Appended to every listing description (eBay-safe HTML subset only).
+boilerplate = "<p><b>Shipping:</b> Dispatched from the UK within 1 business day.</p><p><b>Returns:</b> 30-day returns accepted. Buyer pays return postage.</p>"

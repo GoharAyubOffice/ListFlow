@@ -350,10 +350,25 @@ item may be unavailable" — fine, but a friendlier "item appears to be removed"
 
 | Task | Needed by | Status |
 |---|---|---|
-| Register at developer.ebay.com, create Sandbox + Production keysets | Phase 3 | ⏳ in progress |
-| Create eBay business policies (payment/return/postage) in Seller Hub | Phase 4 | not started |
-| Copy `.env.example` → `.env` and fill keys | Phase 3 | not started |
+| Register at developer.ebay.com, create Sandbox + Production keysets | Phase 3 | ✅ done (sandbox) |
+| Create eBay business policies (payment/return/postage) | Phase 4/E2 | ✅ done (via API, see below) |
+| Copy `.env.example` → `.env` and fill keys | Phase 3 | ✅ done |
 | Approve production use after sandbox E2E passes (gate E3) | Phase 8 | not started |
+
+**Business policies (created 2026-07-18):** the sandbox Seller Hub UI for business
+policies is broken (well-documented eBay issue) AND the account was not opted in
+(`get_opted_in_programs` returned `[]`, policy calls returned errorId 20403 "User is
+not eligible for Business Policy"). Fixed via API: added the **`sell.account` write
+scope** to `ebay/auth.py` SCOPES (user re-ran `listflow auth`), called
+`POST /sell/account/v1/program/opt_in {programType: SELLING_POLICY_MANAGEMENT}` (200),
+then created three EBAY_GB policies via the Account API:
+- payment_policy_id = `6237835000` (Listflow Payment)
+- return_policy_id = `6237836000` (Listflow Returns, 30-day, buyer pays)
+- fulfillment_policy_id = `6237837000` (Listflow Postage, 1-day handling, RM 2nd class £2.99)
+
+These IDs + pricing + a shipping/returns boilerplate now live in `config.toml`
+(project root, non-secret, loads into Settings — verified). **Regenerate all three IDs
+for production before E3.**
 
 ---
 
