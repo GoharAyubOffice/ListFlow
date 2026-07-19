@@ -341,7 +341,56 @@ Brand XMSJ mapped. Headless worked on live items once the profile existed.
 item may be unavailable" — fine, but a friendlier "item appears to be removed" check
 (detect hidden-h1 shell) could come with Phase 7 polish. Item specifics include
 `Origin: Mainland China` and `High-Concerned Chemical: None` — harmless, revisit.
-## ⬜ Phase 7 — CLI + storage — NOT STARTED
+## ✅ Phase 7 — CLI + storage (COMPLETED 2026-07-18)
+
+**What was built (tests first — `test_storage.py` 14, `test_pipeline.py` 14,
+`test_cli.py` 11, +1 publisher, +2 extractor regression):**
+- `listflow/storage.py` — `Tracker` (SQLite at `LISTFLOW_HOME/listflow.db`), `imports`
+  table per spec §4.3 + `last_step` resume column; money stored as **TEXT** (Decimal's
+  own str, exact round-trip); `ebay_sku` UNIQUE so re-import/retry upserts.
+  `start()` (inserts as 'failed' — a crash mid-pipeline stays retryable),
+  `mark_step()`, `finish(status, offer_id, listing_id, notes)`, `set_status()`,
+  `get()`, `all(status)` (newest first), `export_csv()`.
+- `listflow/pipeline.py` — the testable orchestration core. `prepare_from_raw()` (pure:
+  normalize → optional variant select → clean_title → build_description(boilerplate) →
+  validate_forbidden(+store_name) → price); `select_variant()`/`VariantError`;
+  `get_extractor()` (lazy import); `prepare()` (adds live detect+extract).
+- `listflow/cli.py` — all spec §8 commands: `import <url>
+  [--publish|--dry-run|--margin|--headed|--variant|--category|--force]`, `retry <sku>`,
+  `list [--status]`, `export --csv`. Rich tables for dry-run (title+len, price
+  breakdown, images, specifics) and `list`. Below-floor → refuse unless `--force`.
+  Publish failure persists 'failed' + prints eBay error verbatim + "resume with
+  listflow retry <sku>".
+- `listflow/ebay/publisher.py` — `publish()` gained `existing_offer_id`: retry PUT-updates
+  the existing offer instead of POSTing a duplicate (eBay allows one offer per SKU).
+- `pyproject.toml` — ruff `extend-immutable-calls = [typer.Option, typer.Argument]`
+  (the Typer DI idiom).
+
+**🐛 Bug found by the live dry-run smoke (fixed + regression-tested):** the Amazon
+extractor read item-specifics **reversed and full of noise** (Best Sellers Rank,
+Customer Reviews with embedded JS, ASIN). Cause: `#prodDetails` rows are
+`<th>key</th><td>value</td>`, but selectolax `css("td, th")` returns **selector order
+(all td, then th)**, not document order — so key/value were swapped and the noise
+blocklist checked the wrong cell (the old test passed *because* of the reversal — a
+blind spot). Fixed with semantic th/td parsing (`_row_key_value`), prefer the clean
+`#productOverview_feature_div` table, expanded blocklist, and a 100-char value guard.
+Verified live: specifics now Brand/Material/Colour/Handle Material/Operation Mode only.
+
+**Verified (exit gate green):** `pytest` → **230 passed in ~17s** offline (<30s ✓);
+`ruff check .` clean; `listflow --help` shows all 5 commands; **live `import --dry-run`
+end-to-end on a real Amazon URL** (ChomChom): title 73/80, £13.99 → £21.99 (margin
+0.2224, passes floor), 8 images, clean specifics, no eBay calls / nothing stored.
+
+**Decisions made:** dry-run does NOT download images (image sizes shown as "validated
+at publish"; supplier download isn't an eBay call but adds latency — deferred to
+publish where <500px is rejected); dry-run shows category as "auto — resolved at
+publish" unless `--category` given (taxonomy needs a live call, and dry-run makes none);
+`retry` re-extracts from the stored URL with default options (original --margin/--variant
+not persisted — acceptable for v1) and reuses the SKU + any existing offer id.
+
+**Known issues / debt:** retry loses the original --margin/--variant/--category choices
+(re-extracts with defaults); `list` needs a wide-ish terminal (8 columns).
+
 ## ⬜ Phase 8 — Integration gates E1–E4 — NOT STARTED (E3 requires explicit human go)
 
 ---

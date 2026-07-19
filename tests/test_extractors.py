@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import respx
+from selectolax.parser import HTMLParser
 
 from listflow.extractors.aliexpress import (
     AliExpressExtractor,
@@ -76,8 +77,29 @@ def test_parse_fixture_populates_every_canonical_field(amazon_html):
 def test_parse_fixture_attribute_noise_filtered(amazon_html):
     raw = AmazonExtractor().parse(amazon_html, AMAZON_URL)
     lowered = {k.lower() for k in raw.attributes}
+    # regression (2026-07-18): css("td,th") returned selector order, so #prodDetails
+    # rows were read reversed and the noise filter checked the wrong cell.
     assert "customer reviews" not in lowered
     assert "best sellers rank" not in lowered
+    assert "asin" not in lowered
+    assert "chomchom roller" not in lowered  # a VALUE must never end up as a key
+    # keys map to real attribute names, values to their contents (not reversed)
+    assert raw.attributes["Brand"] == "ChomChom Roller"
+    assert raw.attributes["Colour"] == "White"
+    # no scraped-JS blobs survived
+    assert all(len(v) <= 100 for v in raw.attributes.values())
+
+
+def test_attributes_use_th_as_key_not_css_order():
+    # <th>label</th><td>value</td>: label is the key regardless of selector order
+    html = (
+        "<div id='prodDetails'><table>"
+        "<tr><th class='prodDetSectionEntry'>Material Type</th><td>Silicone</td></tr>"
+        "<tr><th>ASIN</th><td>B000000000</td></tr>"
+        "</table></div>"
+    )
+    attrs = AmazonExtractor()._attributes(HTMLParser(html))
+    assert attrs == {"Material Type": "Silicone"}  # ASIN row blocklisted, order correct
 
 
 # ------------------------------------------------------------ helper units

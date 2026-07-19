@@ -221,6 +221,21 @@ def test_429_on_offer_is_retried():
 
 
 @respx.mock
+def test_retry_with_existing_offer_updates_not_duplicates():
+    product = make_product()
+    sku = make_sku(product.source_id)
+    routes = mock_happy_pipeline(sku)
+    update = respx.put(f"{SANDBOX}/sell/inventory/v1/offer/OFF-EXISTING").respond(204)
+    publisher, _ = make_publisher()
+    result = publisher.publish(
+        product, price(Decimal("10.00")), existing_offer_id="OFF-EXISTING"
+    )
+    assert result.offer_id == "OFF-EXISTING"
+    assert update.call_count == 1
+    assert routes["offer"].call_count == 0  # no duplicate POST
+
+
+@respx.mock
 def test_partial_failure_records_completed_steps():
     product = make_product()
     sku = make_sku(product.source_id)

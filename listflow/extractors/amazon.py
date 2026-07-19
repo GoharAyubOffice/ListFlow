@@ -54,11 +54,24 @@ _ATTR_SKIP = {
     "best sellers rank",
     "date first available",
     "item model number",
+    "model number",
     "manufacturer reference",
+    "manufacturer part number",
     "upc",
+    "ean",
+    "global trade identification number",
+    "number of items",
+    "unit count",
+    "item weight",
+    "package dimensions",
     "product dimensions",
+    "item dimensions d x w x h",
     "guaranteed software updates until",
 }
+
+# Values longer than this are almost certainly scraped junk (review blobs, embedded
+# JS), never a real item specific — dropped as a safety net.
+_ATTR_MAX_VALUE_LEN = 100
 
 
 def _asin_from_url(url: str) -> str | None:
@@ -199,18 +212,36 @@ class AmazonExtractor(Extractor):
                 deduped.append(url)
         return deduped
 
+    def _row_key_value(self, row) -> tuple[str, str] | None:
+        # Read cells semantically, not by CSS order: the label is the <th> when present
+        # (`#prodDetails`), otherwise the first of two <td>s (`#productOverview`).
+        # css("td, th") returns selector order (all td, then th), so it cannot be trusted.
+        th = row.css_first("th")
+        tds = row.css("td")
+        if th is not None and tds:
+            key, value = _clean_cell(th.text()), _clean_cell(tds[0].text())
+        elif len(tds) >= 2:
+            key, value = _clean_cell(tds[0].text()), _clean_cell(tds[1].text())
+        else:
+            return None
+        if not key or not value:
+            return None
+        if key.lower() in _ATTR_SKIP or len(value) > _ATTR_MAX_VALUE_LEN:
+            return None
+        return key, value
+
     def _attributes(self, tree: HTMLParser) -> dict[str, str]:
-        attributes: dict[str, str] = {}
+        # The curated "overview" table is clean; only fall back to the noisier tech-spec
+        # / detail table when the overview is absent.
         for selector in (SELECTORS["overview_rows"], SELECTORS["details_rows"]):
+            attributes: dict[str, str] = {}
             for row in tree.css(selector):
-                cells = [_clean_cell(cell.text()) for cell in row.css("td, th")]
-                if len(cells) != 2:
-                    continue
-                key, value = cells
-                if not key or not value or key.lower() in _ATTR_SKIP:
-                    continue
-                attributes.setdefault(key, value)
-        return attributes
+                pair = self._row_key_value(row)
+                if pair:
+                    attributes.setdefault(pair[0], pair[1])
+            if attributes:
+                return attributes
+        return {}
 
     def _store_name(self, tree: HTMLParser) -> str | None:
         node = tree.css_first(SELECTORS["byline"])

@@ -80,6 +80,7 @@ class Publisher:
         *,
         publish: bool = False,
         category_id: str | None = None,
+        existing_offer_id: str | None = None,
     ) -> PublishResult:
         sku = make_sku(product.source_id)
         result = PublishResult(sku=sku)
@@ -105,11 +106,15 @@ class Publisher:
         )
         done("inventory_item")
 
-        offer_response = self._client.post(
-            "/sell/inventory/v1/offer",
-            json=self._offer_payload(product, pricing, sku, result.category_id),
-        )
-        result.offer_id = offer_response.json()["offerId"]
+        offer_payload = self._offer_payload(product, pricing, sku, result.category_id)
+        if existing_offer_id:
+            # retry path: the offer was already created on a previous run — update it
+            # in place rather than POSTing a duplicate (eBay rejects two offers per SKU).
+            self._client.put(f"/sell/inventory/v1/offer/{existing_offer_id}", json=offer_payload)
+            result.offer_id = existing_offer_id
+        else:
+            offer_response = self._client.post("/sell/inventory/v1/offer", json=offer_payload)
+            result.offer_id = offer_response.json()["offerId"]
         done("offer")
 
         if publish:
