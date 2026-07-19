@@ -425,19 +425,29 @@ Test SKU: `LF-B00BAGTNAQ-59a4` (ChomChom, amazon.co.uk).
 
 **Verified:** `pytest` → **235 passed** offline; `ruff` clean.
 
-**⏳ E1 — Live extract IN PROGRESS (2026-07-18):** 1 Amazon + 1 AliExpress dry-run so far
-(bath towels). Amazon B0B4F78QZX £16.04→£24.99; AliExpress 1005010246193426 £24.53→£36.99
-(6 variants). Both fields-complete. **Bug found & fixed (regression-tested):** a
-supplier bullet "visit our Amazon Official store" made the forbidden-token guard
-hard-crash the CLI. Fix: `content.strip_forbidden_content()` drops bullets/item-specifics
-carrying a forbidden token (marketing noise) BEFORE validation; the title and description
-*body* still hard-fail (core content). Pipeline strips before build/validate; CLI now
-reports `ForbiddenTokenError` cleanly instead of a traceback. Still need ~4 more of each
-platform to complete E1. Minor debt: AliExpress specifics include low-value fields
-("Cn: Hebei", "Set Type: Yes", "Disposable: No") — cosmetic, not blocking.
+**✅ E1 — Live extract PASSED (2026-07-19):** 5 Amazon + 5 AliExpress dry-runs across
+pet/kitchen/car/home, all fields populated, all sell prices clear the 20% floor.
+Amazon: towels B0B4F78QZX £16.04→£24.99; garlic press B09YRSGLWQ £3.99→£6.99; car holder
+B0CJHPPTV2 £12.99→£19.99; dog lick mat B0DP9Y388X £4.99→£7.99; KitchenCraft garlic
+B0001IWXW4 £11.95→£18.99. AliExpress (all with SKU matrix): towels 1005010246193426
+£24.53→£36.99; garlic mincer 1005011654023758 £3.91→£6.99; lick-mat insert 1005010161665899
+£5.08→£8.99; TOPK car holder 1005012304329318 £8.45→£13.99; dog lick mat 1005010759204083
+£0.99→£1.99. (Live AliExpress item IDs were harvested from search pages via the in-app
+browser — web search doesn't surface live /item/ URLs; several candidates were dead
+listings, which the extractor rejected cleanly with a snapshot.)
+
+**Three real bugs found & fixed during E1 (all regression-tested):**
+1. A supplier bullet "visit our Amazon Official store" hard-crashed the CLI via the
+   forbidden-token guard → `strip_forbidden_content()` drops noisy bullets/specifics.
+2. Amazon exposes the brand as "store name", so a brand like "Aileem" in a description
+   falsely blocked the product → brands are no longer treated as forbidden.
+3. A cross-sell sentence ("...into your Amazon search bar") blocked a product → such
+   sentences are now dropped from the description; `validate_forbidden` is the safety net.
+
+Minor debt: AliExpress specifics include low-value fields ("Cn: Hebei", "Set Type: Yes",
+"Disposable: No") — cosmetic, not blocking.
 
 **⬜ Remaining gates (need the human):**
-- **E1:** finish ~4 more AliExpress + 4 more Amazon dry-runs; eyeball each price vs page.
 - **E3 — Production draft:** ⚠️ ONLY on explicit human go. Flip `EBAY_ENV=production`,
   create production business policies + real ship-from address in a production
   `config.toml`, re-run `listflow auth` against production, one draft import, review in
