@@ -5,11 +5,14 @@ Implemented in Phase 1. Pure logic — no I/O (stdlib html.parser only, no netwo
 """
 
 import html
+import logging
 import re
 from collections.abc import Iterable
 from html.parser import HTMLParser
 
 from listflow.models import Product
+
+logger = logging.getLogger(__name__)
 
 EBAY_TITLE_LIMIT = 80
 
@@ -279,7 +282,13 @@ def build_description(product: Product, boilerplate: str = "") -> str:
     title = product.title_ebay or product.title_raw
     if title:
         parts.append(f"<p><b>{html.escape(title)}</b></p>")
-    parts.extend(f"<p>{html.escape(block)}</p>" for block in _text_blocks(product.description_html))
+    for block in _text_blocks(product.description_html):
+        # drop supplier cross-sell sentences ("...into your Amazon search bar")
+        token = _find_forbidden(block, ())
+        if token is not None:
+            logger.info("dropped description sentence with forbidden token %r", token)
+            continue
+        parts.append(f"<p>{html.escape(block)}</p>")
 
     bullets = [b.strip() for b in product.bullet_points if b.strip()]
     if bullets:

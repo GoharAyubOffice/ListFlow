@@ -7,7 +7,6 @@ from decimal import Decimal
 import pytest
 
 from listflow.config import Settings
-from listflow.content import ForbiddenTokenError
 from listflow.models import RawProduct, RawVariant, SourcePlatform
 from listflow.pipeline import VariantError, prepare_from_raw, select_variant
 
@@ -56,11 +55,14 @@ def test_prepare_from_raw_full_pipeline():
     assert prepared.store_name == "ChomChom Roller Store"
 
 
-def test_prepare_validates_rebuilt_description_body_hard_fails():
-    # a forbidden token in the description BODY is core content — still a hard failure
-    raw = make_raw(description_html="<p>Genuine, shipped via Amazon Prime</p>")
-    with pytest.raises(ForbiddenTokenError):
-        prepare_from_raw(raw, settings=settings())
+def test_prepare_drops_platform_token_description_sentence():
+    # a supplier cross-sell sentence is dropped from the description, not hard-failed
+    raw = make_raw(
+        description_html="<p>Super soft towels.</p><p>Shipped via Amazon Prime.</p>"
+    )
+    prepared = prepare_from_raw(raw, settings=settings())
+    assert "amazon" not in prepared.product.description_html.lower()
+    assert "Super soft towels" in prepared.product.description_html
 
 
 def test_prepare_strips_forbidden_bullet_and_succeeds():
@@ -82,10 +84,16 @@ def test_prepare_strips_forbidden_item_specific():
     )
 
 
-def test_prepare_store_name_forbidden_when_it_leaks():
-    raw = make_raw(title="ChomChom Roller Store Pet Brush", store_name="ChomChom Roller Store")
-    with pytest.raises(ForbiddenTokenError):
-        prepare_from_raw(raw, settings=settings())
+def test_prepare_keeps_brand_name_in_content():
+    # the brand (Amazon exposes it as store_name) is legitimate — not stripped/failed
+    raw = make_raw(
+        title="Aileem Pet Brush",
+        description_html="<p>Aileem brushes are gentle.</p>",
+        store_name="Aileem",
+    )
+    prepared = prepare_from_raw(raw, settings=settings())
+    assert "Aileem" in prepared.product.title_ebay
+    assert "Aileem" in prepared.product.description_html
 
 
 def test_prepare_margin_override():

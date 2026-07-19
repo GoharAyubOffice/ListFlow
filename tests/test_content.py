@@ -213,6 +213,20 @@ def test_build_description_only_allowed_tags():
     assert tags <= {"p", "ul", "li", "b", "br"}
 
 
+def test_build_description_drops_forbidden_sentences():
+    product = make_product(
+        description_html=(
+            "<p>Ultra soft microfibre.</p>"
+            "<p>Search 'BrandX' on Amazon for more.</p>"
+            "<p>Machine washable.</p>"
+        )
+    )
+    out = build_description(product)
+    assert "amazon" not in out.lower()
+    assert "Ultra soft microfibre" in out
+    assert "Machine washable" in out
+
+
 def test_build_description_script_content_never_survives():
     product = make_product(
         description_html='<p>Good product</p><script>alert("steal")</script>'

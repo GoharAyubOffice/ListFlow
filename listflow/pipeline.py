@@ -90,15 +90,15 @@ def prepare_from_raw(
 
     product.title_ebay = clean_title(product.title_raw, primary_keyword=primary_keyword)
 
-    # store name is checked as an extra forbidden token (never allowed into a listing)
-    extra = [raw.store_name] if raw.store_name else []
-    # strip supplier-branded bullets/specifics (e.g. "visit our Amazon store") before
-    # building the description, so they never reach a listing field
-    for dropped in strip_forbidden_content(product, extra_forbidden=extra):
+    # Strip supplier noise (platform tokens like "visit our Amazon store") from bullets
+    # and specifics before building the description. The brand — which Amazon exposes as
+    # a "store name" — is legitimate in a listing, so it is NOT treated as forbidden;
+    # only the platform/dropship tokens are. build_description drops cross-sell sentences.
+    for dropped in strip_forbidden_content(product):
         logger.info("dropped forbidden content: %s", dropped)
 
     product.description_html = build_description(product, boilerplate=settings.boilerplate)
-    validate_forbidden(product, extra_forbidden=extra)
+    validate_forbidden(product)
 
     pricing = price(
         product.base_cost,
