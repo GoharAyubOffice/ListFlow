@@ -464,6 +464,21 @@ traceback. Invisible to E1 (dry-run skips image download) and E2 (Amazon JPEGs).
 Also note: eBay **Media API returns 404 in production too** for this app → images fall
 back to source URLs, which eBay re-hosts to its own EPS servers at publish (no hotlinks).
 
+**✅ Source-aware postage (2026-07-19):** production has TWO fulfillment policies —
+fast `400048223023` (3-day handling, Amazon) and slow `400048465023` (10-day handling,
+AliExpress; supplier ships from abroad). `Settings.fulfillment_policy_id_slow` +
+`Publisher._fulfillment_policy_id()` pick by `product.source_platform`. Boilerplate no
+longer hard-codes a dispatch time (eBay's policy-driven estimate is authoritative).
+
+**✅ Local GUI (2026-07-19, v2 feature):** `listflow gui` → Streamlit app
+(`listflow/gui_app.py`, optional `[gui]` extra — justified deviation from the minimal-dep
+rule; core CLI unaffected). Flow: URL → preview (price metrics, floor badge) → edit title
+(80-char counter) / description (rendered preview) / image grid with per-image
+checkboxes → Create draft / Publish live (reuses pipeline+publisher; edits re-validated
+for forbidden tokens; below-floor blocked unless Force ticked). Verified in-browser
+against a live AliExpress product. VPS deployment considered and rejected (datacentre
+IPs get robot-checked; credentials belong local).
+
 **⬜ Remaining (need the human):**
 - **Review the draft** (offer 210940067011) and decide: publish live (`--publish`, explicit
   go) or delete the test draft. Note: AliExpress specifics include "Origin: Mainland China"
