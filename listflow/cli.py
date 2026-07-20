@@ -270,7 +270,7 @@ def _run_publish_variations(settings, prepared, *, publish: bool, category_id: s
 
 
 def _print_publish_result(settings, sku: str, result, status: str) -> None:
-    base = "sandbox.ebay.com" if settings.ebay_env == "sandbox" else "ebay.com"
+    base = "sandbox.ebay.com" if settings.ebay_env == "sandbox" else "ebay.co.uk"
     console.print(f"\n[bold green]✓ {status.upper()}[/bold green]  SKU [bold]{sku}[/bold]")
     console.print(f"  Offer:   {result.offer_id}")
     if result.listing_id:
