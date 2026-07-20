@@ -4,7 +4,9 @@ Implemented in Phase 5, fixture-first (tests/fixtures/amazon_B00BAGTNAQ.html).
 Robot-check pages get exactly one retry after 30s — no retry storms, no evasion.
 """
 
+import contextlib
 import logging
+import random
 import re
 import time
 from collections.abc import Callable
@@ -106,9 +108,11 @@ class AmazonExtractor(Extractor):
         self,
         http: httpx.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        headed: bool = False,
     ):
         self._http = http or httpx.Client(timeout=30, follow_redirects=True, headers=_HEADERS)
         self._sleep = sleep
+        self._headed = headed
 
     def extract(self, url: str) -> RawProduct:
         html = self._fetch(url)
@@ -127,17 +131,58 @@ class AmazonExtractor(Extractor):
             self._sleep(30)
             response = self._http.get(url)
             if _looks_like_robot_check(response.text):
-                raise ExtractionError(
-                    "Amazon served a robot-check page twice — extraction blocked. "
-                    "Wait a while, or run the import from your normal home network.",
-                    page_snapshot_path=save_debug_snapshot(response.text, "amazon_robotcheck"),
+                # spec §5.2: shared Playwright fallback — a real browser with the
+                # persistent profile usually gets the page; a visible captcha can be
+                # solved manually in --headed mode.
+                logger.warning(
+                    "still robot-checked — falling back to the real browser "
+                    "(persistent profile)"
                 )
+                return self._fetch_with_browser(url)
         if response.status_code != 200:
             raise ExtractionError(
                 f"Amazon returned HTTP {response.status_code} for {url}",
                 page_snapshot_path=save_debug_snapshot(response.text, "amazon_error"),
             )
         return response.text
+
+    def _fetch_with_browser(self, url: str) -> str:
+        from playwright.sync_api import sync_playwright  # heavy import, fallback only
+
+        from listflow.config import listflow_home
+
+        profile_dir = listflow_home() / "chrome-profile"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                str(profile_dir),
+                headless=not self._headed,
+                locale="en-GB",
+                viewport={"width": 1366, "height": 900},
+            )
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                self._sleep(random.uniform(2, 5))  # politeness dwell
+                html = page.content()
+                if _looks_like_robot_check(html) and self._headed:
+                    logger.warning(
+                        "Amazon shows a captcha — solve it in the browser window "
+                        "(waiting up to 2 minutes)…"
+                    )
+                    with contextlib.suppress(Exception):
+                        page.wait_for_selector(SELECTORS["title"], timeout=120_000)
+                    html = page.content()
+            finally:
+                context.close()
+        if _looks_like_robot_check(html):
+            raise ExtractionError(
+                "Amazon robot-check persists even in the real browser. Re-run with "
+                "--headed (GUI: 'Visible browser' option) and solve the captcha "
+                "manually in the window, or wait a while before retrying.",
+                page_snapshot_path=save_debug_snapshot(html, "amazon_robotcheck"),
+            )
+        return html
 
     def parse(self, html: str, url: str) -> RawProduct:
         tree = HTMLParser(html)

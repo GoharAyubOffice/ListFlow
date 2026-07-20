@@ -151,7 +151,7 @@ def get_extractor(platform: SourcePlatform, *, headed: bool = False):
     if platform is SourcePlatform.AMAZON:
         from listflow.extractors.amazon import AmazonExtractor
 
-        return AmazonExtractor()
+        return AmazonExtractor(headed=headed)  # headed = solvable-captcha browser fallback
     from listflow.extractors.aliexpress import AliExpressExtractor
 
     return AliExpressExtractor(headed=headed)

@@ -171,12 +171,59 @@ def test_robot_check_retries_once_after_30s(amazon_html):
 
 
 @respx.mock
-def test_robot_check_twice_fails_with_snapshot(isolated_home):
+def test_robot_check_twice_falls_back_to_browser(amazon_html, monkeypatch):
+    # spec §5.2: after the single 30s retry, the shared Playwright fallback kicks in
     respx.get(AMAZON_URL).respond(200, text=ROBOT_PAGE)
     sleeps: list[float] = []
-    with pytest.raises(ExtractionError, match="robot"):
-        AmazonExtractor(sleep=sleeps.append).extract(AMAZON_URL)
-    assert sleeps == [30]  # exactly one retry, no storm
+    extractor = AmazonExtractor(sleep=sleeps.append)
+    called = {}
+
+    def fake_browser_fetch(url):
+        called["url"] = url
+        return amazon_html
+
+    monkeypatch.setattr(extractor, "_fetch_with_browser", fake_browser_fetch)
+    raw = extractor.extract(AMAZON_URL)
+    assert raw.source_id == "B00BAGTNAQ"
+    assert sleeps == [30]  # exactly one httpx retry, no storm
+    assert called["url"] == AMAZON_URL
+
+
+def test_browser_fallback_blocked_raises_with_headed_advice(isolated_home, monkeypatch):
+    # if even the real browser gets the robot page, the error must point at --headed
+    extractor = AmazonExtractor(sleep=lambda _s: None)
+
+    class FakePage:
+        def goto(self, *a, **k): ...
+        def wait_for_selector(self, *a, **k): ...
+        def content(self):
+            return ROBOT_PAGE
+
+    class FakeContext:
+        pages = [FakePage()]
+
+        def close(self): ...
+
+    class FakeChromium:
+        def launch_persistent_context(self, *a, **k):
+            return FakeContext()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    import listflow.extractors.amazon as amazon_mod
+
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright", lambda: FakePlaywright()
+    )
+    with pytest.raises(amazon_mod.ExtractionError, match="headed"):
+        extractor._fetch_with_browser(AMAZON_URL)
     assert list((isolated_home / "debug").glob("amazon_robotcheck-*.html"))
 
 

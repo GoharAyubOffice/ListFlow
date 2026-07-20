@@ -419,7 +419,10 @@ def main() -> None:
                       placeholder="Colour=Red,Size=XL")
         st.text_input("eBay category id (optional)", key="opt_category",
                       placeholder="auto-suggested if empty")
-        st.checkbox("Visible browser (AliExpress)", key="opt_headed", value=True)
+        st.checkbox(
+            "Visible browser (AliExpress + Amazon captcha fallback)",
+            key="opt_headed", value=True,
+        )
         st.checkbox("Force below-floor import", key="opt_force", value=False)
         st.divider()
         st.caption(
@@ -457,7 +460,21 @@ def _render_import(margin_pct: int) -> None:
                     "edit_title", "edit_desc", "done", "draft_offer", "opt_all_variants",
                 ):
                     del st.session_state[key]
-            with st.spinner("Extracting product (AliExpress opens a browser window)…"):
+            spin_label = "Extracting product…"
+            try:
+                from listflow.detector import detect
+
+                platform = detect(url.strip()).value
+                if platform == "aliexpress":
+                    spin_label = "Extracting from AliExpress (a browser window opens)…"
+                else:
+                    spin_label = (
+                        "Extracting from Amazon… (a browser window opens only if "
+                        "Amazon blocks the fast path)"
+                    )
+            except Exception:
+                pass
+            with st.spinner(spin_label):
                 try:
                     prepared = _run_preview(
                         url.strip(),
