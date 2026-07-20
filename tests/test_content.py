@@ -92,6 +92,23 @@ def test_clean_title_drops_filler_words():
     assert result == "Garlic Press Stainless Steel"
 
 
+def test_clean_title_never_ends_on_a_connector():
+    # regression (2026-07-20 GUI): truncation left "... Free Weights for" at 80/80
+    raw = (
+        "Anchor Adjustable Dumbbells Set 10kg 20kg 30kg 2 in 1 Barbell & Free Weights "
+        "for Home Gym Men Women Training"
+    )
+    result = clean_title(raw)
+    assert len(result) <= EBAY_TITLE_LIMIT
+    assert result.split()[-1].lower() not in {"for", "with", "and", "&", "in", "of"}
+    assert result.endswith("Free Weights")
+
+
+def test_clean_title_strips_trailing_connector_even_without_truncation():
+    assert clean_title("Dog Brush for") == "Dog Brush"
+    assert clean_title("Grooming Kit &") == "Grooming Kit"
+
+
 def test_clean_title_dedupe_fits_more_keywords_in_80():
     raw = (
         "Oversized Bath Towel Set Towel 90x180cm Towel Soft Towel Highly Absorbent "

@@ -83,16 +83,26 @@ def _publish(prepared, *, publish: bool, category_id: str | None,
     return result, status
 
 
+def _selected_variant_offers(prepared) -> list:
+    """The variant offers the user left ticked in the 'Select variants' expander."""
+    return [
+        offer
+        for i, offer in enumerate(prepared.variant_offers)
+        if st.session_state.get(f"var_{i}", True)
+    ]
+
+
 def _publish_variations(prepared, *, publish: bool, force: bool):
-    """Publish all in-stock variants as one multi-variation listing."""
+    """Publish the SELECTED in-stock variants as one multi-variation listing."""
     from listflow.ebay.publisher import Publisher, make_sku
     from listflow.storage import Tracker
 
     settings = st.session_state["settings"]
     product = prepared.product
     group_key = make_sku(product.source_id)
-    variant_pricings = [(o.variant, o.pricing) for o in prepared.variant_offers]
-    cheapest = min(prepared.variant_offers, key=lambda o: o.pricing.sell_price)
+    selected = _selected_variant_offers(prepared)
+    variant_pricings = [(o.variant, o.pricing) for o in selected]
+    cheapest = min(selected, key=lambda o: o.pricing.sell_price)
     with Tracker.open() as tracker:
         tracker.start(
             sku=group_key, platform=prepared.platform.value,
@@ -253,22 +263,31 @@ def _render_editor(prepared) -> None:
             prices = sorted(o.pricing.sell_price for o in prepared.variant_offers)
             st.markdown(f"**Variants** — {n} in stock, £{prices[0]}–£{prices[-1]}")
             st.checkbox(
-                f"List all {n} variants as one multi-variation listing "
-                "(buyer picks on the listing)",
+                "List variants as one multi-variation listing (buyer picks on the "
+                "listing) — untick any below you don't want",
                 key="opt_all_variants",
             )
-            with st.expander("See variants"):
-                st.table([
-                    {
-                        **o.variant.attributes,
-                        "cost": f"£{o.variant.source_price}",
-                        "sell": f"£{o.pricing.sell_price}",
-                        "floor": "ok" if o.pricing.passes_floor else "below",
-                    }
-                    for o in prepared.variant_offers
-                ])
+            with st.expander("Select variants", expanded=True):
+                for i, offer in enumerate(prepared.variant_offers):
+                    attrs = ", ".join(
+                        f"{k}: {v}" for k, v in offer.variant.attributes.items()
+                    )
+                    floor = "" if offer.pricing.passes_floor else "  ⚠️ below floor"
+                    st.checkbox(
+                        f"{attrs} — cost £{offer.variant.source_price} → "
+                        f"sell £{offer.pricing.sell_price}{floor}",
+                        key=f"var_{i}",
+                        value=st.session_state.get(f"var_{i}", True),
+                    )
         elif product.variants:
             st.info(f"{len(product.variants)} variants found, but none are in stock.")
+        elif prepared.platform.value == "amazon":
+            st.caption(
+                "ℹ️ Amazon pages expose only the variant your URL points to — to list "
+                "another colour/size, import its URL separately. (Full Amazon variant "
+                "matrix extraction is a future feature; AliExpress imports get the "
+                "complete matrix already.)"
+            )
 
     with right:
         st.markdown("**Images** — untick any you don't want")
@@ -343,6 +362,14 @@ def _render_editor(prepared) -> None:
 
     if draft_clicked or publish_clicked:
         force = st.session_state.get("opt_force", False)
+        if all_variants:
+            selected = _selected_variant_offers(prepared)
+            if len(selected) < 2:
+                st.error(
+                    "A multi-variation listing needs at least 2 ticked variants — "
+                    "untick 'multi-variation' instead to list a single SKU."
+                )
+                return
         if not all_variants and not prepared.pricing.passes_floor and not force:
             st.error("Below the 20% margin floor — tick 'Force below-floor import' to override.")
             return
@@ -456,7 +483,7 @@ def _render_import(margin_pct: int) -> None:
             st.warning("Paste a product URL first.")
         else:
             for key in list(st.session_state):
-                if key.startswith("img_") or key in (
+                if key.startswith(("img_", "var_")) or key in (
                     "edit_title", "edit_desc", "done", "draft_offer", "opt_all_variants",
                 ):
                     del st.session_state[key]

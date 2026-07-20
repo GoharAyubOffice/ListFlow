@@ -147,7 +147,21 @@ def clean_title(raw: str, primary_keyword: str | None = None) -> str:
         if s[EBAY_TITLE_LIMIT] != " " and " " in cut:
             cut = cut[: cut.rfind(" ")]
         s = cut.strip(_SEP_CHARS + " ")
-    return s
+    return _strip_trailing_connectors(s)
+
+
+# A title must never END on a connector ("... Free Weights for") — truncation can
+# leave one dangling, and it reads broken on the listing.
+_TRAILING_CONNECTORS = frozenset({
+    "for", "with", "and", "&", "in", "to", "of", "the", "a", "an", "on", "at", "by", "per",
+})
+
+
+def _strip_trailing_connectors(s: str) -> str:
+    words = s.split()
+    while words and words[-1].lower().strip(_SEP_CHARS) in _TRAILING_CONNECTORS:
+        words.pop()
+    return " ".join(words)
 
 
 # ------------------------------------------------------- forbidden tokens
