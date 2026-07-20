@@ -529,6 +529,15 @@ fulfilment. Note: descriptions are REBUILT (not pasted) from cleaned source text
 bullets + specifics + boilerplate; true AI paraphrasing is out of scope for the
 runtime tool — the GUI title/description editors are the human-in-the-loop for that.
 
+**✅ Amazon robot-check browser fallback (2026-07-20):** after the single 30s httpx
+retry, `AmazonExtractor._fetch_with_browser()` uses Playwright Chromium with the shared
+persistent profile (spec §5.2's "--playwright fallback"); in headed mode a visible
+captcha can be solved manually (waits up to 2 min for `#productTitle`, then re-reads the
+page). Still no solvers/spoofing — a real browser + human is the sanctioned path.
+`headed` now reaches AmazonExtractor via `get_extractor`. GUI spinner text is now
+platform-correct (was hard-coded to say AliExpress). Note: suite crept to ~37s on one
+run (target <30s) — worth a look if it stays high.
+
 **⬜ Remaining (need the human):**
 - **Review the draft** (offer 210940067011) and decide: publish live (`--publish`, explicit
   go) or delete the test draft. Note: AliExpress specifics include "Origin: Mainland China"
