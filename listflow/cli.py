@@ -362,6 +362,43 @@ def export(csv_path: Path = typer.Option(..., "--csv", help="Output CSV path")) 
 
 
 @app.command()
+def delete(
+    sku: str = typer.Argument(..., help="SKU or variation group key to delete"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt."),
+) -> None:
+    """End + delete a listing or draft from eBay (single SKU or variation group)."""
+    from listflow.ebay.auth import EbayAuth
+    from listflow.ebay.client import EbayApiError, EbayClient
+    from listflow.ebay.publisher import Publisher
+    from listflow.storage import Tracker
+
+    settings = _load_settings()
+    with Tracker.open() as tracker:
+        row = tracker.get(sku)
+    what = f"{row['title_ebay']!r} ({row['status']})" if row else "not found in tracker"
+    if not yes:
+        typer.confirm(
+            f"Delete {sku} — {what}? This ENDS any live listing and cannot be undone.",
+            abort=True,
+        )
+    publisher = Publisher(EbayClient(settings, EbayAuth(settings)), settings)
+    try:
+        summary = publisher.delete_listing(sku)
+    except EbayApiError as exc:
+        typer.secho(f"Delete failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    if row:
+        with Tracker.open() as tracker:
+            tracker.set_status(sku, "killed", notes="deleted via listflow delete")
+    typer.secho(
+        f"Deleted {sku} — withdrawn={summary['withdrawn']}, "
+        f"offers={summary['offers_deleted']}, items={summary['items_deleted']}, "
+        f"group={summary['group']}",
+        fg=typer.colors.GREEN,
+    )
+
+
+@app.command()
 def gui() -> None:
     """Open the local Streamlit GUI (install with: pip install -e .[gui])."""
     import subprocess

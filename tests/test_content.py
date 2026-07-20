@@ -281,3 +281,33 @@ def test_map_item_specifics_unknown_keys_titlecased():
 def test_map_item_specifics_trims_and_drops_empty():
     result = map_item_specifics({" size ": " XL ", "material": "   "})
     assert result == {"Size": "XL", "Brand": "Unbranded"}
+
+
+def test_map_item_specifics_drops_noise_aspects():
+    raw = {
+        "Colour": "Red",
+        "Material": "Cotton",
+        "Origin": "Mainland China",
+        "Cn": "Hebei",
+        "High-Concerned Chemical": "None",
+        "Set Type": "Yes",
+        "Disposable": "No",
+        "Whether Terry Fabric": "No",
+        "Product Application Scenarios": "Toilet",
+    }
+    result = map_item_specifics(raw)
+    assert result == {"Colour": "Red", "Material": "Cotton", "Brand": "Unbranded"}
+
+
+def test_map_item_specifics_drops_none_values_anywhere():
+    result = map_item_specifics({"Pattern": "None", "Style": "Modern"})
+    assert "Pattern" not in result
+    assert result["Style"] == "Modern"
+
+
+def test_map_item_specifics_keeps_useful_towel_aspects():
+    raw = {"Technics": "Woven", "Features": "Machine Washable", "Type": "Bath Towel"}
+    result = map_item_specifics(raw)
+    assert result["Technics"] == "Woven"
+    assert result["Features"] == "Machine Washable"
+    assert result["Type"] == "Bath Towel"

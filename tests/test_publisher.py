@@ -508,3 +508,83 @@ def test_publish_variations_no_varying_aspect_raises():
     publisher, _ = make_publisher()
     with pytest.raises(ValueError, match="single SKU"):
         publisher.publish_variations(product, variant_pricings(product))
+
+
+# ---------------------------------------------------------------- delete
+
+
+@respx.mock
+def test_delete_single_sku_draft():
+    sku = "LF-ABC-1234"
+    # not a group
+    respx.get(f"{SANDBOX}/sell/inventory/v1/inventory_item_group/{sku}").respond(
+        404, json={"errors": [{"errorId": 25710, "message": "not found"}]}
+    )
+    offers = respx.get(f"{SANDBOX}/sell/inventory/v1/offer").respond(
+        200, json={"offers": [{"offerId": "OFF-1", "status": "UNPUBLISHED"}]}
+    )
+    del_offer = respx.delete(f"{SANDBOX}/sell/inventory/v1/offer/OFF-1").respond(204)
+    del_item = respx.delete(f"{SANDBOX}/sell/inventory/v1/inventory_item/{sku}").respond(204)
+    publisher, _ = make_publisher()
+    summary = publisher.delete_listing(sku)
+    assert offers.called and del_offer.called and del_item.called
+    assert summary["offers_deleted"] == 1
+    assert summary["items_deleted"] == 1
+    assert summary["withdrawn"] is False  # draft — nothing to end
+
+
+@respx.mock
+def test_delete_published_single_sku_withdraws_first():
+    sku = "LF-ABC-1234"
+    respx.get(f"{SANDBOX}/sell/inventory/v1/inventory_item_group/{sku}").respond(404)
+    respx.get(f"{SANDBOX}/sell/inventory/v1/offer").respond(
+        200, json={"offers": [{"offerId": "OFF-1", "status": "PUBLISHED"}]}
+    )
+    withdraw = respx.post(f"{SANDBOX}/sell/inventory/v1/offer/OFF-1/withdraw").respond(200)
+    respx.delete(f"{SANDBOX}/sell/inventory/v1/offer/OFF-1").respond(204)
+    respx.delete(f"{SANDBOX}/sell/inventory/v1/inventory_item/{sku}").respond(204)
+    publisher, _ = make_publisher()
+    summary = publisher.delete_listing(sku)
+    assert withdraw.called
+    assert summary["withdrawn"] is True
+
+
+@respx.mock
+def test_delete_variation_group():
+    group_key = "LF-GRP-9999"
+    respx.get(f"{SANDBOX}/sell/inventory/v1/inventory_item_group/{group_key}").respond(
+        200, json={"variantSKUs": [f"{group_key}-RED", f"{group_key}-BLUE"]}
+    )
+    wd = respx.post(
+        f"{SANDBOX}/sell/inventory/v1/offer/withdraw_by_inventory_item_group"
+    ).respond(200, json={"listingId": "L1"})
+    respx.get(f"{SANDBOX}/sell/inventory/v1/offer").respond(
+        200, json={"offers": [{"offerId": "OFF-X", "status": "PUBLISHED"}]}
+    )
+    respx.delete(url__regex=rf"{SANDBOX}/sell/inventory/v1/offer/.+").respond(204)
+    respx.delete(
+        url__regex=rf"{SANDBOX}/sell/inventory/v1/inventory_item/{group_key}-.+"
+    ).respond(204)
+    del_group = respx.delete(
+        f"{SANDBOX}/sell/inventory/v1/inventory_item_group/{group_key}"
+    ).respond(204)
+    publisher, _ = make_publisher()
+    summary = publisher.delete_listing(group_key)
+    assert wd.called
+    assert summary["withdrawn"] is True
+    assert summary["items_deleted"] == 2  # two variant inventory items
+    assert summary["group"] is True
+    assert del_group.called
+
+
+@respx.mock
+def test_delete_already_gone_is_idempotent():
+    sku = "LF-ABC-1234"
+    respx.get(f"{SANDBOX}/sell/inventory/v1/inventory_item_group/{sku}").respond(404)
+    respx.get(f"{SANDBOX}/sell/inventory/v1/offer").respond(404)
+    respx.delete(f"{SANDBOX}/sell/inventory/v1/inventory_item/{sku}").respond(404)
+    publisher, _ = make_publisher()
+    summary = publisher.delete_listing(sku)
+    assert summary == {
+        "withdrawn": False, "offers_deleted": 0, "items_deleted": 0, "group": False,
+    }

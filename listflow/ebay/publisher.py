@@ -354,6 +354,81 @@ class Publisher:
             )
         return result
 
+    def delete_listing(self, sku: str) -> dict:
+        """End + delete a listing or draft — single SKU or variation group.
+
+        Withdraws any live listing first (ending it), then deletes the offer(s),
+        inventory item(s), and the group. Idempotent: 404s are treated as
+        already-gone. Returns a summary of what was removed.
+        """
+        summary = {"withdrawn": False, "offers_deleted": 0, "items_deleted": 0, "group": False}
+
+        group = None
+        try:
+            group = self._client.get(
+                f"/sell/inventory/v1/inventory_item_group/{sku}"
+            ).json()
+        except EbayApiError as err:
+            if err.status_code != 404:
+                raise
+
+        if group is not None:
+            try:
+                self._client.post(
+                    "/sell/inventory/v1/offer/withdraw_by_inventory_item_group",
+                    json={
+                        "inventoryItemGroupKey": sku,
+                        "marketplaceId": self._settings.marketplace_id,
+                    },
+                )
+                summary["withdrawn"] = True
+            except EbayApiError as err:
+                logger.info("group %s not published — withdraw skipped (%s)", sku, err)
+            skus = list(group.get("variantSKUs", []))
+        else:
+            skus = [sku]
+
+        for one in skus:
+            for offer in self._offers_for_sku(one):
+                offer_id = offer["offerId"]
+                if group is None and offer.get("status") == "PUBLISHED":
+                    try:
+                        self._client.post(f"/sell/inventory/v1/offer/{offer_id}/withdraw")
+                        summary["withdrawn"] = True
+                    except EbayApiError as err:
+                        logger.info("offer %s withdraw skipped (%s)", offer_id, err)
+                if self._delete_ignoring_404(f"/sell/inventory/v1/offer/{offer_id}"):
+                    summary["offers_deleted"] += 1
+            if self._delete_ignoring_404(f"/sell/inventory/v1/inventory_item/{one}"):
+                summary["items_deleted"] += 1
+
+        if group is not None and self._delete_ignoring_404(
+            f"/sell/inventory/v1/inventory_item_group/{sku}"
+        ):
+            summary["group"] = True
+        return summary
+
+    def _offers_for_sku(self, sku: str) -> list[dict]:
+        try:
+            response = self._client.get(
+                "/sell/inventory/v1/offer",
+                params={"sku": sku, "marketplace_id": self._settings.marketplace_id},
+            )
+        except EbayApiError as err:
+            if err.status_code == 404:
+                return []
+            raise
+        return response.json().get("offers") or []
+
+    def _delete_ignoring_404(self, path: str) -> bool:
+        try:
+            self._client.delete(path)
+            return True
+        except EbayApiError as err:
+            if err.status_code == 404:
+                return False
+            raise
+
     def _inventory_payload(self, product: Product, title: str, image_urls: list[str]) -> dict:
         return {
             "product": {

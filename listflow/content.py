@@ -340,13 +340,49 @@ _SPECIFIC_ALIASES = {
 }
 
 
+# Low-value / supplier-tell aspects that clutter a listing — dropped entirely.
+# Exact key match (lowercased) after alias mapping is bypassed for these.
+_NOISE_SPECIFIC_KEYS = frozenset({
+    "origin",  # "Mainland China" — a dropship tell
+    "cn",  # Chinese province code, e.g. "Hebei"
+    "high-concerned chemical",
+    "high concerned chemical",
+    "set type",
+    "disposable",
+    "product application scenarios",
+    "product application scenario",
+    "commodity quality certification",
+    "commodity type",
+    "quantity",
+    "model number",  # supplier SKU noise, not an eBay aspect buyers want
+    "manufacturer part number",
+    "place of origin",
+    "applicable people",
+    "warranty",
+})
+# Key prefixes that mark yes/no supplier metadata ("Whether Terry Fabric": "No").
+_NOISE_KEY_PREFIXES = ("whether",)
+# Values that carry no information — drop the whole aspect.
+_NOISE_VALUES = frozenset({"none", "n/a", "na", "null", "-", "other", "others"})
+
+
+def _is_noise_specific(key: str, value: str) -> bool:
+    key_lower = key.lower()
+    if value.lower() in _NOISE_VALUES:
+        return True
+    if key_lower in _NOISE_SPECIFIC_KEYS:
+        return True
+    return any(key_lower.startswith(prefix) for prefix in _NOISE_KEY_PREFIXES)
+
+
 def map_item_specifics(attrs: dict[str, str]) -> dict[str, str]:
-    """Map raw attribute names onto eBay aspect names; default Brand to Unbranded."""
+    """Map raw attribute names onto eBay aspect names, dropping supplier noise
+    (China origin, yes/no metadata, empty 'None' values); default Brand to Unbranded."""
     out: dict[str, str] = {}
     for raw_key, raw_value in attrs.items():
         key = raw_key.strip()
         value = raw_value.strip()
-        if not key or not value:
+        if not key or not value or _is_noise_specific(key, value):
             continue
         canonical = _SPECIFIC_ALIASES.get(key.lower(), key.title())
         out.setdefault(canonical, value)

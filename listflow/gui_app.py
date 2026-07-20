@@ -128,6 +128,20 @@ def _publish_existing_draft(sku: str, offer_id: str) -> str | None:
     return listing_id
 
 
+def _delete_listing(sku: str) -> dict:
+    """End + delete a listing/draft, then mark it killed in the tracker."""
+    from listflow.ebay.publisher import Publisher
+    from listflow.storage import Tracker
+
+    settings = st.session_state["settings"]
+    publisher = Publisher(_ebay_client(), settings)
+    summary = publisher.delete_listing(sku)
+    with Tracker.open() as tracker:
+        if tracker.get(sku):
+            tracker.set_status(sku, "killed", notes="deleted via GUI")
+    return summary
+
+
 def _listing_url(listing_id: str) -> str:
     env = st.session_state["settings"].ebay_env
     base = "sandbox.ebay.com" if env == "sandbox" else "ebay.co.uk"
@@ -418,6 +432,14 @@ def main() -> None:
         kind, message = st.session_state.pop("flash")
         (st.success if kind == "success" else st.error)(message)
 
+    tab_import, tab_listings = st.tabs(["📥 Import", "📋 My listings"])
+    with tab_import:
+        _render_import(margin_pct)
+    with tab_listings:
+        _render_listings()
+
+
+def _render_import(margin_pct: int) -> None:
     st.subheader("1 · Product URL")
     url_col, button_col = st.columns([5, 1])
     url = url_col.text_input(
@@ -432,7 +454,7 @@ def main() -> None:
         else:
             for key in list(st.session_state):
                 if key.startswith("img_") or key in (
-                    "edit_title", "edit_desc", "done", "draft_offer",
+                    "edit_title", "edit_desc", "done", "draft_offer", "opt_all_variants",
                 ):
                     del st.session_state[key]
             with st.spinner("Extracting product (AliExpress opens a browser window)…"):
@@ -456,6 +478,55 @@ def main() -> None:
 
     if "prepared" in st.session_state:
         _render_editor(st.session_state["prepared"])
+
+
+_STATUS_BADGE = {
+    "published": "🟢 live", "draft": "🟡 draft", "failed": "🔴 failed", "killed": "⚫ deleted",
+}
+
+
+def _render_listings() -> None:
+    from listflow.storage import Tracker
+
+    with Tracker.open() as tracker:
+        rows = tracker.all()
+    if not rows:
+        st.info("No imports yet — list something from the Import tab.")
+        return
+    st.caption(
+        f"{len(rows)} tracked import(s). Delete ends any live listing and removes the "
+        "offer + inventory item(s) from eBay."
+    )
+    for row in rows:
+        sku = row["ebay_sku"]
+        status = row["status"]
+        c1, c2, c3 = st.columns([5, 2, 2])
+        title = row["title_ebay"] or "(untitled)"
+        c1.markdown(
+            f"**{title[:60]}**  \n`{sku}` · {row['source_platform']} · £{row['sell_price']}"
+        )
+        if row["ebay_listing_id"]:
+            c2.markdown(f"[view listing]({_listing_url(row['ebay_listing_id'])})")
+        c2.markdown(_STATUS_BADGE.get(status, status))
+        if status != "killed":
+            with c3.popover("🗑 Delete"):
+                st.write(f"Delete **{sku}**?")
+                if status == "published":
+                    st.warning("This ends a LIVE listing.")
+                if st.button("Yes, delete it", key=f"confirm_del_{sku}", type="primary"):
+                    with st.spinner(f"Deleting {sku}…"):
+                        try:
+                            summary = _delete_listing(sku)
+                        except Exception as exc:
+                            st.error(f"Delete failed: {exc}")
+                            return
+                    _flash(
+                        "success",
+                        f"Deleted {sku} — offers {summary['offers_deleted']}, "
+                        f"items {summary['items_deleted']}.",
+                    )
+                    st.rerun()
+        st.divider()
 
 
 if __name__ == "__main__":
