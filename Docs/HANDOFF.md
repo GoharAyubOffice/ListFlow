@@ -517,6 +517,18 @@ silently didn't match and config.toml (real home address) got re-tracked + commi
 locally (NOT pushed). Fixed: comment moved to its own line, file untracked, commit amended.
 Lesson: never put inline comments in .gitignore.
 
+**✅ Title SEO optimization + fulfilment links (2026-07-20):** `clean_title` now
+dedupes repeated words (case-insensitive, alpha-only cores ≥3 chars; connectors
+and/for/the/with/from/per and numbers/sizes exempt) and drops filler adjectives
+(`_TITLE_FILLER`: Premium/Ideal/Portable/Professional/Quality…), so distinct search
+keywords fit eBay's hard 80-char limit instead of being truncated away. Verified on real
+titles (towel title deduped 3×"Towel", now reaches "Bathroom"). GUI "My listings" rows
+show cost → sell (margin) + **clickable "order from source" link** (tracker already
+stored source_url; now surfaced) next to the eBay listing link — one-click dropship
+fulfilment. Note: descriptions are REBUILT (not pasted) from cleaned source text +
+bullets + specifics + boilerplate; true AI paraphrasing is out of scope for the
+runtime tool — the GUI title/description editors are the human-in-the-loop for that.
+
 **⬜ Remaining (need the human):**
 - **Review the draft** (offer 210940067011) and decide: publish live (`--publish`, explicit
   go) or delete the test draft. Note: AliExpress specifics include "Origin: Mainland China"
