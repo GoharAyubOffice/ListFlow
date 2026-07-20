@@ -83,6 +83,40 @@ def _publish(prepared, *, publish: bool, category_id: str | None,
     return result, status
 
 
+def _publish_variations(prepared, *, publish: bool, force: bool):
+    """Publish all in-stock variants as one multi-variation listing."""
+    from listflow.ebay.publisher import Publisher, make_sku
+    from listflow.storage import Tracker
+
+    settings = st.session_state["settings"]
+    product = prepared.product
+    group_key = make_sku(product.source_id)
+    variant_pricings = [(o.variant, o.pricing) for o in prepared.variant_offers]
+    cheapest = min(prepared.variant_offers, key=lambda o: o.pricing.sell_price)
+    with Tracker.open() as tracker:
+        tracker.start(
+            sku=group_key, platform=prepared.platform.value,
+            source_url=str(product.source_url), source_id=product.source_id,
+            title_ebay=product.title_ebay, cost=product.base_cost,
+            sell_price=cheapest.pricing.sell_price,
+            margin_actual=cheapest.pricing.margin_actual,
+        )
+        publisher = Publisher(_ebay_client(), settings, on_step=tracker.mark_step)
+        try:
+            result = publisher.publish_variations(
+                product, variant_pricings, publish=publish,
+                category_id=st.session_state.get("opt_category", "") or None,
+                force_below_floor=force,
+            )
+        except Exception as exc:
+            tracker.finish(group_key, status="failed", notes=str(exc))
+            raise
+        status = "published" if result.listing_id else "draft"
+        tracker.finish(group_key, status=status, offer_id=result.offer_id,
+                       listing_id=result.listing_id)
+    return result, status
+
+
 def _publish_existing_draft(sku: str, offer_id: str) -> str | None:
     """One API call: publish an already-created draft offer; returns the listingId."""
     from listflow.storage import Tracker
@@ -200,12 +234,27 @@ def _render_editor(prepared) -> None:
             st.table(
                 [{"Aspect": k, "Value": v} for k, v in product.item_specifics.items()]
             )
-        if product.variants:
-            st.info(
-                f"{len(product.variants)} variants found — importing a single SKU "
-                "(set a --variant style selector in the sidebar before Preview to "
-                "choose another)."
+        if prepared.variant_offers:
+            n = len(prepared.variant_offers)
+            prices = sorted(o.pricing.sell_price for o in prepared.variant_offers)
+            st.markdown(f"**Variants** — {n} in stock, £{prices[0]}–£{prices[-1]}")
+            st.checkbox(
+                f"List all {n} variants as one multi-variation listing "
+                "(buyer picks on the listing)",
+                key="opt_all_variants",
             )
+            with st.expander("See variants"):
+                st.table([
+                    {
+                        **o.variant.attributes,
+                        "cost": f"£{o.variant.source_price}",
+                        "sell": f"£{o.pricing.sell_price}",
+                        "floor": "ok" if o.pricing.passes_floor else "below",
+                    }
+                    for o in prepared.variant_offers
+                ])
+        elif product.variants:
+            st.info(f"{len(product.variants)} variants found, but none are in stock.")
 
     with right:
         st.markdown("**Images** — untick any you don't want")
@@ -271,13 +320,16 @@ def _render_editor(prepared) -> None:
             st.rerun()
         return
 
+    all_variants = bool(st.session_state.get("opt_all_variants"))
     b1, b2, _spacer = st.columns([1, 1, 2])
-    draft_clicked = b1.button("📝 Create draft", type="secondary", width="stretch")
-    publish_clicked = b2.button("🚀 Publish live", type="primary", width="stretch")
+    draft_label = "📝 Create variation draft" if all_variants else "📝 Create draft"
+    publish_label = "🚀 Publish all variants" if all_variants else "🚀 Publish live"
+    draft_clicked = b1.button(draft_label, type="secondary", width="stretch")
+    publish_clicked = b2.button(publish_label, type="primary", width="stretch")
 
     if draft_clicked or publish_clicked:
         force = st.session_state.get("opt_force", False)
-        if not prepared.pricing.passes_floor and not force:
+        if not all_variants and not prepared.pricing.passes_floor and not force:
             st.error("Below the 20% margin floor — tick 'Force below-floor import' to override.")
             return
         problems = _apply_edits(prepared)
@@ -285,19 +337,34 @@ def _render_editor(prepared) -> None:
             for problem in problems:
                 st.error(problem)
             return
-        label = "Publishing live listing…" if publish_clicked else "Creating draft offer…"
+        label = "Publishing…" if publish_clicked else "Creating draft…"
         with st.spinner(label):
             try:
-                result, status = _publish(
-                    prepared,
-                    publish=publish_clicked,
-                    category_id=st.session_state.get("opt_category", ""),
-                )
+                if all_variants:
+                    result, status = _publish_variations(
+                        prepared, publish=publish_clicked, force=force
+                    )
+                else:
+                    result, status = _publish(
+                        prepared,
+                        publish=publish_clicked,
+                        category_id=st.session_state.get("opt_category", ""),
+                    )
             except Exception as exc:
                 st.error(f"Import failed: {exc}")
                 st.info("State was saved — you can resume with `listflow retry <sku>`.")
                 return
-        if status == "draft":
+        if all_variants:
+            if status == "published":
+                _flash("success", f"PUBLISHED ✓ {result.sku} — {_listing_url(result.listing_id)}")
+            else:
+                _flash(
+                    "success",
+                    f"Variation DRAFT ✓ {result.sku} — click '🚀 Publish all variants' "
+                    "to go live.",
+                )
+            st.rerun()
+        elif status == "draft":
             st.session_state["draft_offer"] = {"sku": result.sku, "offer_id": result.offer_id}
             _flash("success", f"DRAFT ✓ SKU {result.sku} — offer {result.offer_id}")
             st.rerun()

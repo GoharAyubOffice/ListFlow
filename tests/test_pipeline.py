@@ -161,3 +161,20 @@ def test_select_variant_helper_on_product_directly():
 def test_select_variant_on_single_sku_errors():
     with pytest.raises(VariantError, match="no variants"):
         prepare_from_raw(make_raw(), settings=settings(), variant="Colour=Red")
+
+
+def test_prepare_prices_in_stock_variants_for_variations():
+    prepared = prepare_from_raw(variant_raw(), settings=settings())
+    # variant_raw has 3 variants; the Blue/S one is out of stock and excluded
+    assert prepared.variant_count == 2
+    assert all(o.variant.stock > 0 for o in prepared.variant_offers)
+    # each variant is priced independently off its own source price
+    by_cost = {o.variant.source_price: o.pricing.sell_price for o in prepared.variant_offers}
+    assert set(by_cost) == {D("8.00"), D("6.00")}
+    assert all(sell % 1 == D("0.99") for sell in by_cost.values())
+
+
+def test_single_sku_product_has_no_variant_offers():
+    prepared = prepare_from_raw(make_raw(), settings=settings())
+    assert prepared.variant_offers == []
+    assert prepared.variant_count == 0

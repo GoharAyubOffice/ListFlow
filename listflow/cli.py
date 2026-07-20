@@ -96,8 +96,9 @@ def _print_prepared(prepared, *, category_id: str | None) -> None:
 
     if product.variants:
         console.print(
-            f"[dim]{len(product.variants)} variants found; "
-            "listing a single SKU. Use --variant to choose another.[/dim]"
+            f"[dim]{len(product.variants)} variants found; listing a single SKU. "
+            "Use --variant to choose another, or --all-variants for one "
+            "multi-variation listing.[/dim]"
         )
 
 
@@ -111,6 +112,10 @@ def import_(
     variant: str | None = typer.Option(None, "--variant", help='e.g. "Colour=Red,Size=XL".'),
     category: str | None = typer.Option(None, "--category", help="eBay category id override."),
     force: bool = typer.Option(False, "--force", help="Publish even if below margin floor."),
+    all_variants: bool = typer.Option(
+        False, "--all-variants",
+        help="List every in-stock variant as one multi-variation listing.",
+    ),
 ) -> None:
     """Import a product URL into an eBay draft offer (or --publish live)."""
     from listflow.content import ForbiddenTokenError
@@ -136,6 +141,26 @@ def import_(
         raise typer.Exit(code=1) from exc
 
     _print_prepared(prepared, category_id=category)
+
+    if all_variants:
+        if not prepared.variant_offers:
+            typer.secho(
+                "\nNo in-stock variants to list — re-run without --all-variants for a "
+                "single listing.", fg=typer.colors.RED, err=True,
+            )
+            raise typer.Exit(code=1)
+        prices = sorted(o.pricing.sell_price for o in prepared.variant_offers)
+        console.print(
+            f"\n[bold]Multi-variation:[/bold] {prepared.variant_count} in-stock variants, "
+            f"£{prices[0]}–£{prices[-1]}"
+        )
+        if dry_run:
+            typer.secho("\nDry run — no eBay calls made, nothing stored.", fg=typer.colors.CYAN)
+            return
+        _run_publish_variations(
+            settings, prepared, publish=publish, category_id=category, force=force
+        )
+        return
 
     if not prepared.pricing.passes_floor:
         if not force:
@@ -197,6 +222,51 @@ def _run_publish(settings, prepared, *, publish: bool, category_id: str | None,
                        listing_id=result.listing_id)
 
     _print_publish_result(settings, sku, result, status)
+
+
+def _run_publish_variations(settings, prepared, *, publish: bool, category_id: str | None,
+                            force: bool) -> None:
+    from listflow.ebay.auth import EbayAuth
+    from listflow.ebay.client import EbayApiError, EbayClient
+    from listflow.ebay.publisher import Publisher, make_sku
+    from listflow.images import ImageError
+    from listflow.storage import Tracker
+
+    product = prepared.product
+    group_key = make_sku(product.source_id)
+    variant_pricings = [(o.variant, o.pricing) for o in prepared.variant_offers]
+    cheapest = min(prepared.variant_offers, key=lambda o: o.pricing.sell_price)
+
+    with Tracker.open() as tracker:
+        tracker.start(
+            sku=group_key,
+            platform=prepared.platform.value,
+            source_url=str(product.source_url),
+            source_id=product.source_id,
+            title_ebay=product.title_ebay,
+            cost=product.base_cost,
+            sell_price=cheapest.pricing.sell_price,
+            margin_actual=cheapest.pricing.margin_actual,
+        )
+        publisher = Publisher(EbayClient(settings, EbayAuth(settings)), settings,
+                              on_step=tracker.mark_step)
+        try:
+            result = publisher.publish_variations(
+                product, variant_pricings, publish=publish,
+                category_id=category_id or None, force_below_floor=force,
+            )
+        except (EbayApiError, ImageError, ValueError) as exc:
+            tracker.finish(group_key, status="failed", notes=str(exc))
+            typer.secho(f"\nVariation publish failed: {exc}", fg=typer.colors.RED, err=True)
+            typer.secho(f"State saved — resume with:  listflow retry {group_key}",
+                        fg=typer.colors.YELLOW)
+            raise typer.Exit(code=1) from exc
+
+        status = "published" if result.listing_id else "draft"
+        tracker.finish(group_key, status=status, offer_id=result.offer_id,
+                       listing_id=result.listing_id)
+
+    _print_publish_result(settings, group_key, result, status)
 
 
 def _print_publish_result(settings, sku: str, result, status: str) -> None:

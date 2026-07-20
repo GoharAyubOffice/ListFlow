@@ -13,8 +13,14 @@ import respx
 
 from listflow.config import Settings
 from listflow.ebay.client import EbayApiError, EbayClient
-from listflow.ebay.publisher import LOCATION_KEY, Publisher, make_sku
-from listflow.models import Product
+from listflow.ebay.publisher import (
+    LOCATION_KEY,
+    Publisher,
+    _analyze_variations,
+    _variant_sku,
+    make_sku,
+)
+from listflow.models import ImageAsset, Product, Variant
 from listflow.pricing import price
 
 SANDBOX = "https://api.sandbox.ebay.com"
@@ -319,3 +325,186 @@ def test_partial_failure_records_completed_steps():
     # everything before the offer step is recorded, so `listflow retry` can resume
     assert [step for _, step in recorded] == ["location", "images", "category", "inventory_item"]
     assert all(s == sku for s, _ in recorded)
+
+
+# ============================================================ multi-variation
+
+
+def make_variant_product() -> Product:
+    return Product(
+        source_platform="aliexpress",
+        source_url="https://www.aliexpress.com/item/1005010246193426.html",
+        source_id="1005010246193426",
+        title_raw="Oversized Bath Towel Set",
+        title_ebay="Oversized Bath Towel Set 90x180cm Soft Absorbent",
+        description_html="<p><b>Soft towels</b></p>",
+        images=[{"source_url": "https://cdn.example.com/main.png"}],
+        variants=[
+            Variant(
+                sku_suffix="RED-S", attributes={"Colour": "Red", "Size": "S"},
+                source_price=Decimal("5.00"), stock=5,
+                image=ImageAsset(source_url="https://cdn.example.com/red.png"),
+            ),
+            Variant(
+                sku_suffix="RED-L", attributes={"Colour": "Red", "Size": "L"},
+                source_price=Decimal("6.00"), stock=3,
+                image=ImageAsset(source_url="https://cdn.example.com/red.png"),
+            ),
+            Variant(
+                sku_suffix="BLUE-L", attributes={"Colour": "Blue", "Size": "L"},
+                source_price=Decimal("6.50"), stock=2,
+                image=ImageAsset(source_url="https://cdn.example.com/blue.png"),
+            ),
+        ],
+        base_cost=Decimal("5.00"),
+        currency="GBP",
+        item_specifics={"Brand": "Unbranded", "Material": "Cotton"},
+        extracted_at=datetime.now(UTC),
+    )
+
+
+def variant_pricings(product):
+    return [(v, price(v.source_price)) for v in product.variants]
+
+
+def mock_variation_pipeline(group_key: str):
+    routes = {}
+    routes["loc_get"] = respx.get(
+        f"{SANDBOX}/sell/inventory/v1/location/{LOCATION_KEY}"
+    ).respond(200, json={"merchantLocationKey": LOCATION_KEY})
+    for name in ("main", "red", "blue"):
+        respx.get(f"https://cdn.example.com/{name}.png").respond(
+            200, content=png_bytes(800, 800)
+        )
+    routes["media"] = respx.post(MEDIA).respond(
+        404, json={"errors": [{"errorId": 2002, "message": "Not found"}]}
+    )
+    routes["tree"] = respx.get(
+        f"{SANDBOX}/commerce/taxonomy/v1/get_default_category_tree_id"
+    ).respond(200, json={"categoryTreeId": "3"})
+    routes["suggest"] = respx.get(
+        f"{SANDBOX}/commerce/taxonomy/v1/category_tree/3/get_category_suggestions"
+    ).respond(
+        200,
+        json={"categorySuggestions": [{"category": {"categoryId": "45591", "categoryName": "T"}}]},
+    )
+    routes["item"] = respx.put(
+        url__regex=rf"{SANDBOX}/sell/inventory/v1/inventory_item/.+"
+    ).respond(204)
+    routes["group"] = respx.put(
+        url__regex=rf"{SANDBOX}/sell/inventory/v1/inventory_item_group/.+"
+    ).respond(204)
+
+    counter = {"n": 0}
+
+    def offer_response(request):
+        counter["n"] += 1
+        return httpx.Response(201, json={"offerId": f"OFF-{counter['n']}"})
+
+    routes["offer"] = respx.post(f"{SANDBOX}/sell/inventory/v1/offer").mock(
+        side_effect=offer_response
+    )
+    routes["publish"] = respx.post(
+        f"{SANDBOX}/sell/inventory/v1/offer/publish_by_inventory_item_group"
+    ).respond(200, json={"listingId": "LIST-VAR-1"})
+    return routes
+
+
+def test_analyze_variations_splits_varying_from_shared():
+    product = make_variant_product()
+    varying, shared, deduped = _analyze_variations(variant_pricings(product))
+    assert varying == {"Colour": ["Red", "Blue"], "Size": ["S", "L"]}
+    assert shared == {}
+    assert len(deduped) == 3
+
+
+def test_analyze_variations_dedupes_and_finds_shared():
+    p = make_variant_product()
+    pairs = variant_pricings(p)
+    pairs.append(pairs[0])  # duplicate combo -> dropped
+    varying, shared, deduped = _analyze_variations(pairs)
+    assert len(deduped) == 3
+
+
+def test_variant_sku_unique_and_bounded():
+    used: set[str] = set()
+    a = _variant_sku("LF-ABC-1234", "RED-S", used)
+    b = _variant_sku("LF-ABC-1234", "RED-S", used)  # collision -> suffixed
+    assert a != b
+    assert a.startswith("LF-ABC-1234-RED-S")
+    assert len(a) <= 50
+
+
+@respx.mock
+def test_publish_variations_draft_builds_group_and_offers():
+    product = make_variant_product()
+    group_key = make_sku(product.source_id)
+    routes = mock_variation_pipeline(group_key)
+    publisher, _ = make_publisher()
+    result = publisher.publish_variations(product, variant_pricings(product))
+
+    assert result.sku == group_key
+    assert result.listing_id is None  # draft
+    assert routes["publish"].call_count == 0
+    assert routes["item"].call_count == 3  # one inventory item per variant
+    assert routes["group"].call_count == 1
+    assert routes["offer"].call_count == 3
+    assert result.steps_completed == [
+        "location", "images", "category", "inventory_item", "inventory_group", "offer",
+    ]
+
+    group_payload = jsonlib.loads(routes["group"].calls.last.request.content)
+    assert len(group_payload["variantSKUs"]) == 3
+    assert all(sku.startswith(group_key) for sku in group_payload["variantSKUs"])
+    specs = {s["name"]: s["values"] for s in group_payload["variesBy"]["specifications"]}
+    assert specs == {"Colour": ["Red", "Blue"], "Size": ["S", "L"]}
+    assert group_payload["variesBy"]["aspectsImageVariesBy"] == ["Colour"]
+    assert group_payload["aspects"] == {"Brand": ["Unbranded"], "Material": ["Cotton"]}
+
+    # each inventory item carries its own varying aspects + the shared ones
+    item_payloads = [jsonlib.loads(c.request.content) for c in routes["item"].calls]
+    aspect_sets = [p["product"]["aspects"] for p in item_payloads]
+    assert {
+        "Colour": ["Red"], "Size": ["S"], "Brand": ["Unbranded"], "Material": ["Cotton"],
+    } in aspect_sets
+
+    # each variant offer is priced independently (cost 5.00/6.00/6.50 -> round up to x.99)
+    offer_prices = {
+        jsonlib.loads(c.request.content)["pricingSummary"]["price"]["value"]
+        for c in routes["offer"].calls
+    }
+    assert offer_prices == {"7.99", "9.99", "10.99"}
+
+
+@respx.mock
+def test_publish_variations_publish_returns_listing_id():
+    product = make_variant_product()
+    routes = mock_variation_pipeline(make_sku(product.source_id))
+    publisher, _ = make_publisher()
+    result = publisher.publish_variations(product, variant_pricings(product), publish=True)
+    assert result.listing_id == "LIST-VAR-1"
+    assert routes["publish"].call_count == 1
+    payload = jsonlib.loads(routes["publish"].calls.last.request.content)
+    assert payload["inventoryItemGroupKey"] == make_sku(product.source_id)
+    assert payload["marketplaceId"] == "EBAY_GB"
+
+
+@respx.mock
+def test_publish_variations_all_below_floor_raises():
+    product = make_variant_product()
+    # a thin 5% target margin puts every variant below the 20% floor
+    pricings = [(v, price(v.source_price, margin=Decimal("0.05"))) for v in product.variants]
+    publisher, _ = make_publisher()
+    with pytest.raises(ValueError, match="floor"):
+        publisher.publish_variations(product, pricings)
+
+
+@respx.mock
+def test_publish_variations_no_varying_aspect_raises():
+    # all variants share identical attributes -> not a real variation
+    product = make_variant_product()
+    for v in product.variants:
+        v.attributes = {"Colour": "Red", "Size": "S"}
+    publisher, _ = make_publisher()
+    with pytest.raises(ValueError, match="single SKU"):
+        publisher.publish_variations(product, variant_pricings(product))

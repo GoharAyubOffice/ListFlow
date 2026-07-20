@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from listflow.cli import app
 from listflow.ebay.publisher import PublishResult, make_sku
-from listflow.models import RawProduct, SourcePlatform
+from listflow.models import RawProduct, RawVariant, SourcePlatform
 
 runner = CliRunner()
 
@@ -226,6 +226,51 @@ def test_retry_unknown_sku(monkeypatch):
     result = runner.invoke(app, ["retry", "LF-nope-0000"])
     assert result.exit_code == 1
     assert "No import found" in result.output
+
+
+# ---------------------------------------------------------------- variations
+
+def variant_raw() -> RawProduct:
+    return make_raw(
+        variants=[
+            RawVariant(attributes={"Colour": "Red", "Size": "S"}, price=Decimal("5.00"), stock=5),
+            RawVariant(attributes={"Colour": "Blue", "Size": "L"}, price=Decimal("6.00"), stock=3),
+            RawVariant(attributes={"Colour": "Green"}, price=Decimal("7.00"), stock=0),  # OOS
+        ]
+    )
+
+
+def test_all_variants_dry_run_makes_no_calls(monkeypatch):
+    patch_extractor(monkeypatch, variant_raw())
+
+    def boom(*a, **k):
+        raise AssertionError("must not publish in dry-run")
+
+    monkeypatch.setattr("listflow.cli._run_publish_variations", boom)
+    result = runner.invoke(app, ["import", AMAZON_URL, "--all-variants", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Multi-variation: 2 in-stock variants" in result.output
+    assert "Dry run" in result.output
+
+
+def test_all_variants_routes_to_variation_publish(monkeypatch):
+    patch_extractor(monkeypatch, variant_raw())
+    captured = {}
+    monkeypatch.setattr(
+        "listflow.cli._run_publish_variations",
+        lambda settings, prepared, **k: captured.update(k, n=prepared.variant_count),
+    )
+    result = runner.invoke(app, ["import", AMAZON_URL, "--all-variants"])
+    assert result.exit_code == 0, result.output
+    assert captured["publish"] is False
+    assert captured["n"] == 2
+
+
+def test_all_variants_on_single_sku_errors(monkeypatch):
+    patch_extractor(monkeypatch, make_raw())  # no variants
+    result = runner.invoke(app, ["import", AMAZON_URL, "--all-variants"])
+    assert result.exit_code == 1
+    assert "No in-stock variants" in result.output
 
 
 def test_retry_resumes_failed(monkeypatch):

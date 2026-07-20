@@ -67,33 +67,50 @@ def image_size(data: bytes) -> tuple[int, int] | None:
     return None
 
 
+def _download_valid(
+    client: httpx.Client, url: str
+) -> tuple[ImageAsset, bytes] | None:
+    """Download one image and return (asset, bytes) if it is a recognised format
+    at least MIN_LONGEST_SIDE on its longest side; otherwise None (with a warning)."""
+    try:
+        response = client.get(url)
+    except httpx.HTTPError as exc:
+        logger.warning("image download failed (%s): %s", url, exc)
+        return None
+    if response.status_code != 200:
+        logger.warning("image download HTTP %d: %s", response.status_code, url)
+        return None
+    size = image_size(response.content)
+    if size is None:
+        logger.warning("unrecognised image format, skipping: %s", url)
+        return None
+    width, height = size
+    if max(width, height) < MIN_LONGEST_SIDE:
+        logger.warning("image below %dpx (%dx%d), skipping: %s",
+                       MIN_LONGEST_SIDE, width, height, url)
+        return None
+    return ImageAsset(source_url=url, width=width, height=height), response.content
+
+
+def fetch_image_urls(
+    urls: list[str], http: httpx.Client | None = None
+) -> list[tuple[ImageAsset, bytes]]:
+    """Download + validate a list of image URLs (sequentially). Never raises —
+    returns only the usable ones (possibly empty). Used for per-variant images."""
+    client = http or httpx.Client(timeout=30, follow_redirects=True)
+    usable: list[tuple[ImageAsset, bytes]] = []
+    for url in urls:
+        got = _download_valid(client, url)
+        if got is not None:
+            usable.append(got)
+    return usable
+
+
 def fetch_images(
     product: Product, http: httpx.Client | None = None
 ) -> list[tuple[ImageAsset, bytes]]:
     """Download source images one at a time; keep only >=500px; error if none usable."""
-    client = http or httpx.Client(timeout=30, follow_redirects=True)
-    usable: list[tuple[ImageAsset, bytes]] = []
-    for asset in product.images:
-        url = str(asset.source_url)
-        try:
-            response = client.get(url)
-        except httpx.HTTPError as exc:
-            logger.warning("image download failed (%s): %s", url, exc)
-            continue
-        if response.status_code != 200:
-            logger.warning("image download HTTP %d: %s", response.status_code, url)
-            continue
-        size = image_size(response.content)
-        if size is None:
-            logger.warning("unrecognised image format, skipping: %s", url)
-            continue
-        width, height = size
-        if max(width, height) < MIN_LONGEST_SIDE:
-            logger.warning("image below %dpx (%dx%d), skipping: %s",
-                           MIN_LONGEST_SIDE, width, height, url)
-            continue
-        asset.width, asset.height = width, height
-        usable.append((asset, response.content))
+    usable = fetch_image_urls([str(a.source_url) for a in product.images], http=http)
     if not usable:
         raise ImageError(
             f"no usable images — eBay needs at least one image >={MIN_LONGEST_SIDE}px "

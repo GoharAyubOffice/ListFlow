@@ -17,12 +17,16 @@ from listflow import images as images_mod
 from listflow.config import Settings
 from listflow.ebay.client import EbayApiError, EbayClient
 from listflow.ebay.taxonomy import suggest_category
-from listflow.models import PricingResult, Product
+from listflow.models import PricingResult, Product, Variant
 
 logger = logging.getLogger(__name__)
 
 LOCATION_KEY = "MAIN"
 STEPS = ("location", "images", "category", "inventory_item", "offer", "publish")
+# multi-variation publishing inserts an extra "inventory_group" step before "offer"
+VARIATION_STEPS = (
+    "location", "images", "category", "inventory_item", "inventory_group", "offer", "publish",
+)
 
 
 def _is_duplicate_offer_error(err: EbayApiError) -> bool:
@@ -30,6 +34,58 @@ def _is_duplicate_offer_error(err: EbayApiError) -> bool:
     return any(
         "already exists" in str(item.get("message", "")).lower() for item in err.errors
     )
+
+
+def _analyze_variations(
+    pairs: list[tuple[Variant, PricingResult]],
+) -> tuple[dict[str, list[str]], dict[str, str], list[tuple[Variant, PricingResult]]]:
+    """Split variant attributes into varying vs shared aspects (eBay variesBy).
+
+    Only aspects present on EVERY variant are considered. Variants that duplicate the
+    varying-aspect combination are dropped (eBay requires each combo to be unique).
+    Returns (varying: aspect -> ordered distinct values, shared: aspect -> value,
+    deduped pairs).
+    """
+    if not pairs:
+        return {}, {}, []
+    common = set.intersection(*[set(v.attributes) for v, _ in pairs])
+    deduped: list[tuple[Variant, PricingResult]] = []
+    seen: set[tuple] = set()
+    for variant, pricing in pairs:
+        combo = tuple(sorted((k, variant.attributes[k]) for k in common))
+        if combo in seen:
+            continue
+        seen.add(combo)
+        deduped.append((variant, pricing))
+    varying: dict[str, list[str]] = {}
+    shared: dict[str, str] = {}
+    for key in sorted(common):
+        values = list(dict.fromkeys(v.attributes[key] for v, _ in deduped))
+        if len(values) > 1:
+            varying[key] = values
+        else:
+            shared[key] = values[0]
+    return varying, shared, deduped
+
+
+def _image_varies_aspect(varying: dict[str, list[str]]) -> str | None:
+    """The colour-like varying aspect that per-variant images key off, if any."""
+    for key in varying:
+        if "colour" in key.lower() or "color" in key.lower():
+            return key
+    return None
+
+
+def _variant_sku(group_key: str, suffix: str, used: set[str]) -> str:
+    """Unique per-variant SKU derived from the group key + attribute suffix (<=50 chars)."""
+    base = re.sub(r"[^A-Za-z0-9-]", "", suffix).upper().strip("-") or "V"
+    candidate = f"{group_key}-{base}"[:50]
+    n = 1
+    while candidate in used:
+        candidate = f"{group_key}-{base}-{n}"[:50]
+        n += 1
+    used.add(candidate)
+    return candidate
 
 
 def make_sku(source_id: str) -> str:
@@ -159,6 +215,143 @@ class Publisher:
             logger.info("offer %s published as listing %s", result.offer_id, result.listing_id)
         else:
             logger.info("offer %s left as draft (no --publish)", result.offer_id)
+        return result
+
+    def publish_variations(
+        self,
+        product: Product,
+        variant_pricings: list[tuple[Variant, PricingResult]],
+        *,
+        publish: bool = False,
+        category_id: str | None = None,
+        force_below_floor: bool = False,
+    ) -> PublishResult:
+        """Publish all qualifying variants as one multi-variation listing via eBay's
+        inventory_item_group API (buyer picks colour/size on a single listing)."""
+        group_key = make_sku(product.source_id)
+        result = PublishResult(sku=group_key)
+
+        def done(step: str) -> None:
+            result.steps_completed.append(step)
+            self._on_step(group_key, step)
+
+        usable = [
+            (v, p) for v, p in variant_pricings if p.passes_floor or force_below_floor
+        ]
+        if not usable:
+            raise ValueError(
+                "no in-stock variant meets the 20% margin floor — nothing to list "
+                "(publish a single SKU, or override the floor)"
+            )
+        varying, shared_attrs, usable = _analyze_variations(usable)
+        if not varying:
+            raise ValueError(
+                "the variants do not differ by any consistent aspect — "
+                "list a single SKU instead"
+            )
+
+        self.ensure_location()
+        done("location")
+
+        fetched = images_mod.fetch_images(product)
+        images_mod.upload_images(self._client, fetched)
+        gallery_urls = images_mod.listing_image_urls(fetched)
+        done("images")
+
+        title = product.title_ebay or product.title_raw
+        result.category_id = category_id or suggest_category(self._client, title)
+        done("category")
+
+        # shared aspects = constant variant attributes + non-varying item specifics
+        shared_aspects = {k: [v] for k, v in shared_attrs.items()}
+        for key, value in product.item_specifics.items():
+            if key not in varying:
+                shared_aspects.setdefault(key, [value])
+
+        used_skus: set[str] = set()
+        variant_records: list[tuple[str, Variant, PricingResult]] = []
+        have_variant_images = False
+        for variant, pricing in usable:
+            vsku = _variant_sku(group_key, variant.sku_suffix, used_skus)
+            item_images = gallery_urls
+            if variant.image is not None:
+                got = images_mod.fetch_image_urls([str(variant.image.source_url)])
+                if got:
+                    images_mod.upload_images(self._client, got)
+                    item_images = images_mod.listing_image_urls(got)
+                    have_variant_images = True
+            aspects = dict(shared_aspects)
+            for key in varying:
+                aspects[key] = [variant.attributes[key]]
+            self._client.put(
+                f"/sell/inventory/v1/inventory_item/{vsku}",
+                json={
+                    "availability": {
+                        "shipToLocationAvailability": {"quantity": self._settings.max_qty}
+                    },
+                    "condition": "NEW",
+                    "product": {
+                        "title": title,
+                        "aspects": aspects,
+                        "imageUrls": item_images,
+                    },
+                },
+            )
+            variant_records.append((vsku, variant, pricing))
+        done("inventory_item")
+
+        varies_by: dict = {
+            "specifications": [{"name": k, "values": v} for k, v in varying.items()]
+        }
+        if have_variant_images and (image_aspect := _image_varies_aspect(varying)):
+            varies_by["aspectsImageVariesBy"] = [image_aspect]
+        self._client.put(
+            f"/sell/inventory/v1/inventory_item_group/{group_key}",
+            json={
+                "title": title,
+                "description": product.description_html,
+                "imageUrls": gallery_urls,
+                "aspects": shared_aspects,
+                "variantSKUs": [rec[0] for rec in variant_records],
+                "variesBy": varies_by,
+            },
+        )
+        done("inventory_group")
+
+        offer_ids: list[str] = []
+        for vsku, _variant, pricing in variant_records:
+            payload = self._offer_payload(product, pricing, vsku, result.category_id)
+            try:
+                response = self._client.post("/sell/inventory/v1/offer", json=payload)
+                offer_ids.append(response.json()["offerId"])
+            except EbayApiError as err:
+                if not _is_duplicate_offer_error(err):
+                    raise
+                offer_id = self._find_offer_id(vsku)
+                self._client.put(f"/sell/inventory/v1/offer/{offer_id}", json=payload)
+                offer_ids.append(offer_id)
+        result.offer_id = offer_ids[0] if offer_ids else None
+        done("offer")
+
+        if publish:
+            response = self._client.post(
+                "/sell/inventory/v1/offer/publish_by_inventory_item_group",
+                json={
+                    "inventoryItemGroupKey": group_key,
+                    "marketplaceId": self._settings.marketplace_id,
+                },
+            )
+            result.listing_id = response.json().get("listingId")
+            done("publish")
+            logger.info(
+                "variation group %s published as listing %s (%d variants)",
+                group_key, result.listing_id, len(variant_records),
+            )
+        else:
+            logger.info(
+                "variation group %s left as draft (%d variants)",
+                group_key, len(variant_records),
+            )
         return result
 
     def _inventory_payload(self, product: Product, title: str, image_urls: list[str]) -> dict:

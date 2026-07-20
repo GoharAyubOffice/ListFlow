@@ -7,7 +7,7 @@ is unit-testable without Typer, and `prepare_from_raw()` is fully network-free.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from listflow.config import Settings
@@ -30,12 +30,25 @@ class VariantError(ValueError):
 
 
 @dataclass
+class VariantOffer:
+    """An in-stock variant priced independently (for multi-variation listings)."""
+
+    variant: Variant
+    pricing: PricingResult
+
+
+@dataclass
 class Prepared:
     platform: SourcePlatform
     raw: RawProduct
     product: Product
-    pricing: PricingResult
+    pricing: PricingResult  # single-SKU pricing (cheapest in-stock / selected variant)
     store_name: str | None
+    variant_offers: list[VariantOffer] = field(default_factory=list)  # for --all-variants
+
+    @property
+    def variant_count(self) -> int:
+        return len(self.variant_offers)
 
 
 def _parse_variant_selector(selector: str) -> dict[str, str]:
@@ -100,18 +113,36 @@ def prepare_from_raw(
     product.description_html = build_description(product, boilerplate=settings.boilerplate)
     validate_forbidden(product)
 
+    target_margin = margin if margin is not None else settings.margin
     pricing = price(
         product.base_cost,
-        margin=margin if margin is not None else settings.margin,
+        margin=target_margin,
         fvf_rate=settings.fvf_rate,
         fixed_fee=settings.fixed_fee,
     )
+
+    # price every in-stock variant independently for multi-variation listings
+    variant_offers = [
+        VariantOffer(
+            variant=variant,
+            pricing=price(
+                variant.source_price,
+                margin=target_margin,
+                fvf_rate=settings.fvf_rate,
+                fixed_fee=settings.fixed_fee,
+            ),
+        )
+        for variant in product.variants
+        if variant.stock > 0
+    ]
+
     return Prepared(
         platform=raw.source_platform,
         raw=raw,
         product=product,
         pricing=pricing,
         store_name=raw.store_name,
+        variant_offers=variant_offers,
     )
 
 
