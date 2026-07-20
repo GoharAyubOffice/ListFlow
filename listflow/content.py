@@ -94,6 +94,34 @@ def _decap_shouting(word: str) -> str:
     return word
 
 
+# Filler words that spend precious title characters without adding search value.
+_TITLE_FILLER = frozenset({
+    "ideal", "perfect", "premium", "quality", "luxury", "durable", "portable",
+    "practical", "useful", "fashion", "fashionable", "creative", "multifunctional",
+    "multi-functional", "professional", "upgraded", "upgrade", "newest", "latest",
+})
+
+
+# Connectors that legitimately repeat — never deduped.
+_DEDUPE_EXEMPT = frozenset({"and", "for", "the", "with", "from", "per"})
+
+
+def _dedupe_title_words(s: str) -> str:
+    """Drop repeated words (AliExpress titles repeat the product noun 2-3x) and
+    filler adjectives, so distinct search keywords fit inside eBay's 80 chars.
+    Numbers/sizes ("90x180cm", "2") and connectors are never deduped; order kept."""
+    seen: set[str] = set()
+    kept: list[str] = []
+    for word in s.split():
+        core = re.sub(r"[^a-z0-9]", "", word.lower())
+        if core.isalpha() and len(core) >= 3 and core not in _DEDUPE_EXEMPT:
+            if core in seen or core in _TITLE_FILLER:
+                continue
+            seen.add(core)
+        kept.append(word)
+    return " ".join(kept)
+
+
 def clean_title(raw: str, primary_keyword: str | None = None) -> str:
     """Clean a supplier title into an eBay-legal one (<=80 chars, noise stripped).
 
@@ -103,6 +131,7 @@ def clean_title(raw: str, primary_keyword: str | None = None) -> str:
     s = _EMOJI_RE.sub(" ", raw)
     s = _NOISE_RE.sub(" ", s)
     s = " ".join(_decap_shouting(word) for word in s.split())
+    s = _dedupe_title_words(s)
     s = _LONE_SEP_RE.sub("", s)
     s = re.sub(r"\s{2,}", " ", s).strip().strip(_SEP_CHARS + " ")
 

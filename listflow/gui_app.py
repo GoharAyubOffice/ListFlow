@@ -503,10 +503,18 @@ def _render_listings() -> None:
         c1, c2, c3 = st.columns([5, 2, 2])
         title = row["title_ebay"] or "(untitled)"
         c1.markdown(
-            f"**{title[:60]}**  \n`{sku}` · {row['source_platform']} · £{row['sell_price']}"
+            f"**{title[:60]}**  \n"
+            f"`{sku}` · {row['source_platform']} · "
+            f"cost £{row['cost']} → sell £{row['sell_price']} "
+            f"(margin {row['margin_actual']})"
         )
+        links = []
         if row["ebay_listing_id"]:
-            c2.markdown(f"[view listing]({_listing_url(row['ebay_listing_id'])})")
+            links.append(f"[▶ eBay listing]({_listing_url(row['ebay_listing_id'])})")
+        if row["source_url"]:
+            links.append(f"[🛒 order from source]({row['source_url']})")
+        if links:
+            c2.markdown("  \n".join(links))
         c2.markdown(_STATUS_BADGE.get(status, status))
         if status != "killed":
             with c3.popover("🗑 Delete"):

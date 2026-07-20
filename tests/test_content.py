@@ -51,8 +51,8 @@ def make_product(**overrides) -> Product:
         ("Pet Brush - Free Shipping - Hot Sale", "Pet Brush"),
         ("AliExpress Pet Brush Amazon Choice", "Pet Brush"),
         ("\U0001f525\U0001f525 Pet Hair Remover \U0001f43e", "Pet Hair Remover"),
-        ("Dog Bowl ⭐ Premium", "Dog Bowl Premium"),
-        ("AMAZING QUALITY Dog Brush USB LED", "Amazing Quality Dog Brush USB LED"),
+        ("Dog Bowl ⭐ Premium", "Dog Bowl"),  # star stripped, 'Premium' is filler
+        ("AMAZING QUALITY Dog Brush USB LED", "Amazing Dog Brush USB LED"),  # filler out
         ("  Pet   Hair    Remover  ", "Pet Hair Remover"),
         ("", ""),
     ],
@@ -72,10 +72,44 @@ def test_clean_title_cases(raw, expected):
     assert clean_title(raw) == expected
 
 
-def test_clean_title_truncates_at_last_full_word():
+def test_clean_title_dedupes_repeated_keywords():
+    # AliExpress titles repeat the product noun — dedupe frees chars for real keywords
+    raw = "4Pcs Bath Towel Set 90x180cm Towel, Soft Absorbent Towel for Bathroom Towel"
+    result = clean_title(raw)
+    assert result.lower().count("towel") == 1
+    assert "90x180cm" in result  # sizes/numbers never deduped
+    assert "4Pcs" in result
+
+
+def test_clean_title_keeps_connectors_and_numbers():
+    raw = "Brush for Dogs and for Cats 2 in 2 Pack"
+    result = clean_title(raw)
+    assert result == "Brush for Dogs and for Cats 2 in 2 Pack"  # 'for'/'2' repeat fine
+
+
+def test_clean_title_drops_filler_words():
+    result = clean_title("Premium Portable Ideal Garlic Press Stainless Steel")
+    assert result == "Garlic Press Stainless Steel"
+
+
+def test_clean_title_dedupe_fits_more_keywords_in_80():
     raw = (
-        "Professional Double Sided Stainless Steel Pet Grooming "
-        "Brush for Long Haired Dogs and Cats"
+        "Oversized Bath Towel Set Towel 90x180cm Towel Soft Towel Highly Absorbent "
+        "Towel Ideal for Bathroom Gym Spa Swimming Beach Travel Quick Dry"
+    )
+    result = clean_title(raw)
+    assert len(result) <= EBAY_TITLE_LIMIT
+    assert result.lower().count("towel") == 1
+    # dedupe rescued keywords that plain 80-char truncation of the raw never reached
+    assert "Bathroom" in result
+    assert "Spa" in result
+
+
+def test_clean_title_truncates_at_last_full_word():
+    # no filler/repeated words, so the only transformation is the 80-char cut
+    raw = (
+        "Double Sided Stainless Steel Pet Grooming Brush Comb "
+        "for Long Haired Dogs and Cats Rabbits"
     )
     assert len(raw) > EBAY_TITLE_LIMIT
     result = clean_title(raw)
