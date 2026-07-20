@@ -479,6 +479,30 @@ for forbidden tokens; below-floor blocked unless Force ticked). Verified in-brow
 against a live AliExpress product. VPS deployment considered and rejected (datacentre
 IPs get robot-checked; credentials belong local).
 
+**✅ Full multi-variation listings (2026-07-19, v2 feature):** `--all-variants` (CLI) /
+"list all N variants" (GUI) publishes every in-stock, above-floor variant as ONE eBay
+listing (buyer picks colour/size). `Publisher.publish_variations()` uses the
+inventory_item_group API: per-variant inventory items (own varying aspects + shared +
+per-variant image), the item group (variesBy.specifications + aspectsImageVariesBy for
+colour-keyed images), per-variant offers, then publishOfferByInventoryItemGroup.
+`pipeline.prepare` prices each in-stock variant into `Prepared.variant_offers`;
+`images.fetch_image_urls` validates per-variant images (≥500px, falls back to gallery);
+`_analyze_variations` splits varying vs shared aspects, dedupes combos, requires
+consistent keys. Single-SKU stays the DEFAULT. **Verified on production** (draft): towels
+1005010246193426 → group `LF-100501024619-9c59`, 6 variant SKUs, Color aspect w/ 6 values,
+aspectsImageVariesBy=[Color]. 260 tests offline (respx). Amazon still only extracts the
+selected variant (full Amazon variant grid remains a separate extractor task).
+
+**Test drafts on the production account to clean up:** garlic single-SKU published
+(listing 358816295011 — the user was going to delete it), garlic mincer draft
+210940067011, pet brush draft, towel variation draft group LF-100501024619-9c59.
+
+**⚠️ Privacy near-miss (fixed):** `.gitignore` had an INLINE comment on the config.toml
+line (`config.toml   # ...`) — git only treats `#` as a comment at line start, so the rule
+silently didn't match and config.toml (real home address) got re-tracked + committed
+locally (NOT pushed). Fixed: comment moved to its own line, file untracked, commit amended.
+Lesson: never put inline comments in .gitignore.
+
 **⬜ Remaining (need the human):**
 - **Review the draft** (offer 210940067011) and decide: publish live (`--publish`, explicit
   go) or delete the test draft. Note: AliExpress specifics include "Origin: Mainland China"
