@@ -493,9 +493,23 @@ consistent keys. Single-SKU stays the DEFAULT. **Verified on production** (draft
 aspectsImageVariesBy=[Color]. 260 tests offline (respx). Amazon still only extracts the
 selected variant (full Amazon variant grid remains a separate extractor task).
 
-**Test drafts on the production account to clean up:** garlic single-SKU published
-(listing 358816295011 — the user was going to delete it), garlic mincer draft
-210940067011, pet brush draft, towel variation draft group LF-100501024619-9c59.
+**✅ Noise-filtered specifics + delete + LIVE variation verified (2026-07-20):**
+- `content.map_item_specifics` drops supplier-tell/low-value aspects (Origin: Mainland
+  China, Cn, High-Concerned Chemical, Set Type, Disposable, Whether*, None-values).
+- `Publisher.delete_listing(sku)` ends+deletes single SKUs and variation groups
+  (withdraw if live → delete offers → items → group; 404-idempotent). `listflow delete
+  <sku>` command + GUI "My listings" tab with per-row popover-confirm delete.
+- **LIVE variation publish verified end-to-end** on production: towels →
+  listing **358820088044**, 6 variants, varies by Color, shared aspects clean
+  (Absorption/Brand/Features/Material/Technics/Type — zero noise). This is the finalized
+  variant flow the user wanted (import straight to a clean live listing).
+- CLI listing URL fixed to ebay.co.uk for production GB.
+
+**Current LIVE listings on the production account** (user can delete via GUI or
+`listflow delete`): towel variation group LF-100501024619-9c59 (358820088044),
+dumbbells LF-B0FC2ZWF1N-ddec, garlic LF-100501165402-af0b. Tracker also has a stale
+sandbox ChomChom row (LF-B00BAGTNAQ-59a4) — not on production; delete is a no-op there.
+Three test drafts already deleted via `listflow delete`.
 
 **⚠️ Privacy near-miss (fixed):** `.gitignore` had an INLINE comment on the config.toml
 line (`config.toml   # ...`) — git only treats `#` as a comment at line start, so the rule
